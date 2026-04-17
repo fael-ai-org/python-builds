@@ -378,6 +378,10 @@ def main() -> None:
         "major",
         help="Python major version line (example: 3.12). Latest patch is resolved automatically.",
     )
+    parser.add_argument(
+        "--python-version",
+        help="Explicit full Python version (example: 3.12.13). Skips API tag resolution.",
+    )
     parser.add_argument("--target-os", choices=["windows", "linux", "macos"])
     parser.add_argument("--target-arch", choices=["x86_64", "arm64"])
     parser.add_argument("--output-dir", default="dist")
@@ -385,8 +389,11 @@ def main() -> None:
 
     ensure_windows_admin()
 
-    tags = fetch_tags()
-    version = latest_for_major(tags, args.major)
+    if args.python_version:
+        version = args.python_version
+    else:
+        tags = fetch_tags()
+        version = latest_for_major(tags, args.major)
     target_os = args.target_os or detect_target_os()
     target_arch = args.target_arch or detect_target_arch()
     base_name = f"python-{version}-{target_os}-{target_arch}"

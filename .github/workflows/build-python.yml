@@ -39,6 +39,8 @@ jobs:
           python-version: "3.12"
 
       - id: resolve
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python scripts/resolve_latest_patch.py --majors-file config/majors.json > versions.json
           echo "versions_json=$(jq -c . versions.json)" >> "$GITHUB_OUTPUT"
@@ -146,6 +148,8 @@ jobs:
         run: python -m compileall scripts
 
       - name: Re-resolve configured versions
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python scripts/resolve_latest_patch.py --majors-file config/majors.json > versions.json
           cat versions.json
@@ -193,9 +197,12 @@ jobs:
           brew install openssl@3 sqlite xz zlib tcl-tk
 
       - name: Build archive
+        shell: bash
         run: |
+          set -euo pipefail
           python scripts/build_portable.py \
             "${{ matrix.major }}" \
+            --python-version "${{ matrix.python_version }}" \
             --target-os "${{ matrix.target_os }}" \
             --target-arch "${{ matrix.target_arch }}" \
             --output-dir dist

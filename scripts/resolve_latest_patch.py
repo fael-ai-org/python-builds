@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import urllib.request
 from pathlib import Path
@@ -17,13 +18,14 @@ def fetch_tags() -> list[str]:
     page = 1
     while True:
         url = f"https://api.github.com/repos/python/cpython/tags?per_page=100&page={page}"
-        request = urllib.request.Request(
-            url,
-            headers={
-                "Accept": "application/vnd.github+json",
-                "User-Agent": "python-builds-managed/1.0",
-            },
-        )
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "python-builds-managed/1.0",
+        }
+        github_token = os.environ.get("GITHUB_TOKEN", "").strip()
+        if github_token:
+            headers["Authorization"] = f"Bearer {github_token}"
+        request = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(request, timeout=30) as response:
             payload = json.loads(response.read().decode("utf-8"))
         if not payload:
