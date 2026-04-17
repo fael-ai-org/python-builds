@@ -45,8 +45,6 @@ def fast_check_modules() -> list[str]:
         "zoneinfo",
         "ensurepip",
         "venv",
-        "tkinter",
-        "idlelib",
     ]
 
 
