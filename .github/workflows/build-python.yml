@@ -99,7 +99,7 @@ jobs:
                   "archive_ext": ".zip",
               },
               {
-                  "runner": "macos-13",
+                  "runner": "macos-15-intel",
                   "target_os": "macos",
                   "target_arch": "x86_64",
                   "archive_ext": ".tar.gz",
