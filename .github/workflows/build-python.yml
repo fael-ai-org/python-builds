@@ -238,7 +238,6 @@ jobs:
         run: |
           python scripts/validate_distribution.py \
             "dist-archive/${{ matrix.archive_name }}" \
-            --baseline-python python \
             --full-timeout-seconds 5
 
   release:

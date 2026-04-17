@@ -89,9 +89,25 @@ def fast_check_layout() -> list[str]:
     return issues
 
 
-def expected_missing_on_windows(name: str) -> bool:
-    # These are commonly absent on Windows CPython builds / not applicable.
-    posixish = {
+def expected_missing_for_platform(name: str, platform_name: str) -> bool:
+    """
+    Return True for modules that are platform-specific and therefore expected to
+    be missing on the current runtime platform.
+    """
+    windows_only = {
+        "_msi",
+        "_overlapped",
+        "_winapi",
+        "msilib",
+        "msvcrt",
+        "nt",
+        "winreg",
+        "winsound",
+    }
+    macos_only = {
+        "_scproxy",
+    }
+    posix_only = {
         "posix",
         "pwd",
         "grp",
@@ -101,18 +117,14 @@ def expected_missing_on_windows(name: str) -> bool:
         "fcntl",
         "resource",
         "syslog",
-        "readline",
-        "curses",
-        "_curses",
-        "_curses_panel",
-        "_posixsubprocess",
-        "_posixshmem",
-        "_scproxy",
-        "_gdbm",
-        "_dbm",
-        "_ios_support",
     }
-    return name in posixish
+
+    if platform_name.startswith("win"):
+        return name in (posix_only | macos_only)
+    if platform_name == "darwin":
+        return name in windows_only
+    # linux and other posix-like targets
+    return name in (windows_only | macos_only)
 
 
 def import_module_subprocess(python_exe: str, name: str, timeout_s: int) -> str | None:
@@ -195,7 +207,7 @@ def main() -> int:
         if err is None:
             continue
         failures.append(ImportFailure(name=name, error=err))
-        if sys.platform.startswith("win") and (not args.strict) and expected_missing_on_windows(name):
+        if (not args.strict) and expected_missing_for_platform(name, sys.platform):
             continue
         unexpected.append(name)
 
