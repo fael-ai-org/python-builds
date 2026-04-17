@@ -1,4 +1,4 @@
-# python-builds-managed
+# python-builds
 
 Build portable CPython archives from source with the full standard library included.
 
