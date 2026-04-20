@@ -105,7 +105,7 @@ def expected_missing_for_platform(name: str, platform_name: str) -> bool:
     macos_only = {
         "_scproxy",
     }
-    posix_only = {
+    non_windows_posix = {
         "posix",
         "pwd",
         "grp",
@@ -116,13 +116,20 @@ def expected_missing_for_platform(name: str, platform_name: str) -> bool:
         "resource",
         "syslog",
     }
+    linux_like_only = {
+        "ossaudiodev",
+        "spwd",
+    }
+    optional_extension_modules = {
+        "_gdbm",
+    }
 
     if platform_name.startswith("win"):
-        return name in (posix_only | macos_only)
+        return name in (non_windows_posix | linux_like_only | macos_only)
     if platform_name == "darwin":
-        return name in windows_only
+        return name in (windows_only | linux_like_only | optional_extension_modules)
     # linux and other posix-like targets
-    return name in (windows_only | macos_only)
+    return name in (windows_only | macos_only | optional_extension_modules)
 
 
 def import_module_subprocess(python_exe: str, name: str, timeout_s: int) -> str | None:

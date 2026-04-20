@@ -18,11 +18,15 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from resolve_latest_patch import fetch_tags, latest_for_major
+from resolve_latest_patch import details_for_version, fetch_tag_refs, latest_detail_for_major
 
 
-def run(cmd: list[str], cwd: Path | None = None) -> None:
-    subprocess.run(cmd, cwd=cwd, check=True)
+def run(
+    cmd: list[str],
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> None:
+    subprocess.run(cmd, cwd=cwd, env=env, check=True)
 
 
 def remove_tree(path: Path) -> None:
@@ -248,7 +252,68 @@ def build_windows(version: str, target_arch: str, stage_dir: Path) -> None:
         shutil.copy2(license_txt, python_dir / "LICENSE.txt")
 
 
-def build_unix(version: str, stage_dir: Path) -> None:
+def prepend_env_paths(env: dict[str, str], key: str, paths: list[Path]) -> None:
+    existing = env.get(key, "")
+    additions = [str(path) for path in paths if path.exists()]
+    if not additions:
+        return
+    env[key] = os.pathsep.join(additions + ([existing] if existing else []))
+
+
+def prepend_env_flags(env: dict[str, str], key: str, flags: list[str]) -> None:
+    existing = env.get(key, "")
+    additions = [flag for flag in flags if flag]
+    if not additions:
+        return
+    env[key] = " ".join(additions + ([existing] if existing else []))
+
+
+def brew_prefix(formula: str) -> Path | None:
+    if shutil.which("brew") is None:
+        return None
+    try:
+        result = subprocess.run(
+            ["brew", "--prefix", formula],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        return None
+
+    prefix = result.stdout.strip()
+    return Path(prefix) if prefix else None
+
+
+def unix_build_env(target_os: str) -> dict[str, str]:
+    env = os.environ.copy()
+    if target_os != "macos":
+        return env
+
+    prefixes = [
+        brew_prefix(formula)
+        for formula in ["openssl@3", "sqlite", "xz", "zlib", "tcl-tk"]
+    ]
+    prefixes = [prefix for prefix in prefixes if prefix is not None]
+
+    include_dirs = [prefix / "include" for prefix in prefixes]
+    lib_dirs = [prefix / "lib" for prefix in prefixes]
+    pkgconfig_dirs = []
+    for prefix in prefixes:
+        pkgconfig_dirs.extend(
+            [
+                prefix / "lib" / "pkgconfig",
+                prefix / "share" / "pkgconfig",
+            ]
+        )
+
+    prepend_env_paths(env, "PKG_CONFIG_PATH", pkgconfig_dirs)
+    prepend_env_flags(env, "CPPFLAGS", [f"-I{path}" for path in include_dirs if path.exists()])
+    prepend_env_flags(env, "LDFLAGS", [f"-L{path}" for path in lib_dirs if path.exists()])
+    return env
+
+
+def build_unix(version: str, stage_dir: Path, target_os: str) -> None:
     archive, _, verified = download_verified_source(version, stage_dir)
     if not verified:
         print(
@@ -261,6 +326,7 @@ def build_unix(version: str, stage_dir: Path) -> None:
         tf.extractall(stage_dir)
 
     python_dir = stage_dir / "python"
+    env = unix_build_env(target_os)
     run(
         [
             "./configure",
@@ -269,10 +335,11 @@ def build_unix(version: str, stage_dir: Path) -> None:
             "--enable-optimizations",
         ],
         cwd=src_dir,
+        env=env,
     )
     cpu_count = os.cpu_count() or 2
-    run(["make", f"-j{cpu_count}"], cwd=src_dir)
-    run(["make", "install"], cwd=src_dir)
+    run(["make", f"-j{cpu_count}"], cwd=src_dir, env=env)
+    run(["make", "install"], cwd=src_dir, env=env)
 
 
 def write_metadata(
@@ -283,9 +350,13 @@ def write_metadata(
     archive_name: str,
     source_url: str,
     source_sha256: str,
+    cpython_tag: str,
+    cpython_tag_commit_sha: str,
 ) -> None:
     metadata = {
         "python_version": version,
+        "cpython_tag": cpython_tag,
+        "cpython_tag_commit_sha": cpython_tag_commit_sha,
         "target_os": target_os,
         "target_arch": target_arch,
         "archive_name": archive_name,
@@ -389,11 +460,13 @@ def main() -> None:
 
     ensure_windows_admin()
 
+    tag_refs = fetch_tag_refs()
     if args.python_version:
         version = args.python_version
+        cpython_release = details_for_version(tag_refs, version)
     else:
-        tags = fetch_tags()
-        version = latest_for_major(tags, args.major)
+        cpython_release = latest_detail_for_major(tag_refs, args.major)
+        version = cpython_release["version"]
     target_os = args.target_os or detect_target_os()
     target_arch = args.target_arch or detect_target_arch()
     base_name = f"python-{version}-{target_os}-{target_arch}"
@@ -413,7 +486,7 @@ def main() -> None:
         if source_archive.exists():
             source_sha256 = sha256sum(source_archive)
     else:
-        build_unix(version, stage_dir)
+        build_unix(version, stage_dir, target_os)
         source_archive = stage_dir / f"Python-{version}.tgz"
         if source_archive.exists():
             source_sha256 = sha256sum(source_archive)
@@ -427,6 +500,8 @@ def main() -> None:
         f"{base_name}",
         source_url,
         source_sha256,
+        cpython_release["tag"],
+        cpython_release["tag_commit_sha"],
     )
     archive_path = package(stage_dir, root / args.output_dir, base_name, target_os)
     print(str(archive_path))

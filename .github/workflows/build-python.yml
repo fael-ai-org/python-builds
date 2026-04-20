@@ -19,22 +19,24 @@ on:
     - cron: "30 3 * * 1"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   check-upstream:
     runs-on: ubuntu-latest
     outputs:
-      should_build: ${{ steps.check.outputs.should_build }}
-      versions_json: ${{ steps.resolve.outputs.versions_json }}
-      release_tag: ${{ steps.check.outputs.release_tag }}
+      should_build: ${{ steps.plan.outputs.should_build }}
+      current_versions_json: ${{ steps.plan.outputs.current_versions_json }}
+      changed_versions_json: ${{ steps.plan.outputs.changed_versions_json }}
+      release_plan_json: ${{ steps.plan.outputs.release_plan_json }}
+      release_tag: ${{ steps.plan.outputs.release_tag }}
       matrix: ${{ steps.make-matrix.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -42,40 +44,35 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python scripts/resolve_latest_patch.py --majors-file config/majors.json > versions.json
-          echo "versions_json=$(jq -c . versions.json)" >> "$GITHUB_OUTPUT"
-          cat versions.json
+          python scripts/resolve_latest_patch.py --majors-file config/majors.json --details > resolved-details.json
+          cat resolved-details.json
 
-      - id: check
+      - id: plan
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE_REBUILD: ${{ github.event.inputs.force_rebuild || 'false' }}
+          RELEASE_TAG_INPUT: ${{ github.event.inputs.release_tag || '' }}
         run: |
           set -euo pipefail
 
-          FORCE="${{ github.event.inputs.force_rebuild }}"
-          EVENT="${{ github.event_name }}"
-          CURRENT="$(jq -r 'to_entries | map(.value) | sort | join(",")' versions.json)"
-          LATEST_RELEASE_TAG="$(gh release list --limit 1 --json tagName --jq '.[0].tagName // ""')"
-          LAST=""
-
-          if [ -n "${LATEST_RELEASE_TAG}" ]; then
-            LAST="$(echo "${LATEST_RELEASE_TAG}" | sed -E 's/^python-//')"
+          PLAN_ARGS=()
+          if [ "${FORCE_REBUILD}" = "true" ]; then
+            PLAN_ARGS+=(--force)
+          fi
+          if [ -n "${RELEASE_TAG_INPUT}" ]; then
+            PLAN_ARGS+=(--release-tag "${RELEASE_TAG_INPUT}")
           fi
 
-          echo "current_versions=${CURRENT}"
-          echo "latest_release_versions=${LAST}"
+          python scripts/plan_release.py \
+            --resolved-file resolved-details.json \
+            --state-file release-state/latest.json \
+            "${PLAN_ARGS[@]}" > release-plan.json
 
-          if [ "${FORCE}" = "true" ] || [ "${EVENT}" = "schedule" ] || [ "${CURRENT}" != "${LAST}" ]; then
-            echo "should_build=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_build=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          if [ -n "${{ github.event.inputs.release_tag }}" ]; then
-            echo "release_tag=${{ github.event.inputs.release_tag }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "release_tag=python-${CURRENT//,/-}" >> "$GITHUB_OUTPUT"
-          fi
+          cat release-plan.json
+          echo "should_build=$(jq -r '.should_build' release-plan.json)" >> "$GITHUB_OUTPUT"
+          echo "current_versions_json=$(jq -c '.current_versions' release-plan.json)" >> "$GITHUB_OUTPUT"
+          echo "changed_versions_json=$(jq -c '.changed_versions' release-plan.json)" >> "$GITHUB_OUTPUT"
+          echo "release_plan_json=$(jq -c . release-plan.json)" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$(jq -r '.release_tag' release-plan.json)" >> "$GITHUB_OUTPUT"
 
       - id: make-matrix
         shell: python
@@ -84,7 +81,8 @@ jobs:
           import os
           from pathlib import Path
 
-          versions = json.loads(Path("versions.json").read_text(encoding="utf-8"))
+          plan = json.loads(Path("release-plan.json").read_text(encoding="utf-8"))
+          versions = plan["changed_versions"]
           targets = [
               {
                   "runner": "ubuntu-24.04",
@@ -138,9 +136,9 @@ jobs:
     if: needs.check-upstream.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -151,13 +149,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python scripts/resolve_latest_patch.py --majors-file config/majors.json > versions.json
-          cat versions.json
+          python scripts/resolve_latest_patch.py --majors-file config/majors.json --details > resolved-details.json
+          cat resolved-details.json
 
       - name: Smoke test validation CLIs
         run: |
           python scripts/check_stdlib.py --help
           python scripts/validate_distribution.py --help
+          python scripts/plan_release.py --help
+          python scripts/update_release_state.py --help
 
   build:
     needs: [check-upstream, validate-scripts]
@@ -167,9 +167,9 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.check-upstream.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -208,7 +208,7 @@ jobs:
             --output-dir dist
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_name }}
           path: dist/${{ matrix.archive_name }}
@@ -222,14 +222,14 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.check-upstream.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Download built archive
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ matrix.artifact_name }}
           path: dist-archive
@@ -243,12 +243,23 @@ jobs:
             --full-timeout-seconds 5
 
   release:
-    if: ${{ github.event_name == 'workflow_dispatch' && needs.check-upstream.outputs.should_build == 'true' }}
+    if: needs.check-upstream.outputs.should_build == 'true'
     needs: [check-upstream, validate-artifacts]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref_name }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: release-assets
           merge-multiple: true
@@ -258,10 +269,73 @@ jobs:
           cd release-assets
           sha256sum * > SHA256SUMS.txt
 
+      - name: Restore release plan
+        run: |
+          printf '%s' '${{ needs.check-upstream.outputs.release_plan_json }}' > release-plan.json
+          cat release-plan.json
+
+      - name: Update release state files
+        env:
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python scripts/update_release_state.py \
+            --plan-file release-plan.json \
+            --output-dir release-state \
+            --build-source-commit "${{ github.sha }}" \
+            --workflow-run-id "${{ github.run_id }}" \
+            --workflow-run-url "${GITHUB_RUN_URL}" \
+            --repository "${{ github.repository }}" \
+            --event-name "${{ github.event_name }}"
+
+      - id: commit-state
+        name: Commit release state
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add release-state
+
+          if git diff --cached --quiet; then
+            echo "release_commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git commit -m "Record release state for ${{ needs.check-upstream.outputs.release_tag }}"
+          git push origin HEAD:${{ github.ref_name }}
+          echo "release_commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - id: push-tag
+        name: Create and push release tag
+        env:
+          RELEASE_TAG: ${{ needs.check-upstream.outputs.release_tag }}
+          RELEASE_COMMIT_SHA: ${{ steps.commit-state.outputs.release_commit_sha }}
+        run: |
+          set -euo pipefail
+
+          git fetch --tags --force --prune --prune-tags
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "Tag already exists on origin: ${RELEASE_TAG}"
+            echo "tag_name=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if git rev-parse -q --verify "refs/tags/${RELEASE_TAG}" >/dev/null; then
+            git tag -d "${RELEASE_TAG}"
+          fi
+
+          git tag -a "${RELEASE_TAG}" "${RELEASE_COMMIT_SHA}" -m "Release ${RELEASE_TAG}"
+          git push origin "refs/tags/${RELEASE_TAG}"
+          echo "tag_name=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ needs.check-upstream.outputs.release_tag }}
+          tag_name: ${{ steps.push-tag.outputs.tag_name }}
           name: Source-built Portable Python Bundle
+          fail_on_unmatched_files: true
           generate_release_notes: true
           files: release-assets/*

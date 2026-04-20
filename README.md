@@ -55,4 +55,6 @@ Main workflow:
 
 - `.github/workflows/build-python.yml`
 
-It resolves the latest patch versions, builds archives, validates the artifacts, and publishes a release on manual runs.
+It resolves the latest patch versions every week, compares them against the committed `release-state/latest.json` snapshot, builds only the majors that changed, validates the resulting artifacts, records a new in-repo release-state snapshot, and publishes a GitHub release and tag automatically.
+
+Each packaged artifact also records the upstream CPython Git tag and tag commit SHA in `METADATA.json` alongside the python.org source URL and source checksum.
