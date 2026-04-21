@@ -285,6 +285,15 @@ def brew_prefix(formula: str) -> Path | None:
     return Path(prefix) if prefix else None
 
 
+def macos_dependency_prefixes() -> tuple[str, ...]:
+    return (
+        "/usr/local/opt/",
+        "/opt/homebrew/opt/",
+        "/usr/local/Cellar/",
+        "/opt/homebrew/Cellar/",
+    )
+
+
 def unix_build_env(target_os: str) -> dict[str, str]:
     env = os.environ.copy()
     if target_os != "macos":
@@ -311,6 +320,114 @@ def unix_build_env(target_os: str) -> dict[str, str]:
     prepend_env_flags(env, "CPPFLAGS", [f"-I{path}" for path in include_dirs if path.exists()])
     prepend_env_flags(env, "LDFLAGS", [f"-L{path}" for path in lib_dirs if path.exists()])
     return env
+
+
+def otool_dependencies(binary: Path) -> list[str]:
+    try:
+        result = subprocess.run(
+            ["otool", "-L", str(binary)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return []
+
+    dependencies: list[str] = []
+    for line in result.stdout.splitlines()[1:]:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        dependencies.append(stripped.split(" (", 1)[0])
+    return dependencies
+
+
+def is_macos_external_dependency(path: str) -> bool:
+    return path.startswith(macos_dependency_prefixes())
+
+
+def ensure_writable(path: Path) -> None:
+    mode = path.stat().st_mode
+    os.chmod(path, mode | stat.S_IWRITE)
+
+
+def relative_loader_reference(consumer: Path, dependency: Path) -> str:
+    relative = os.path.relpath(dependency, start=consumer.parent).replace("\\", "/")
+    return f"@loader_path/{relative}"
+
+
+def macos_load_targets(python_dir: Path) -> list[Path]:
+    seen: set[Path] = set()
+    targets: list[Path] = []
+
+    for file in python_dir.rglob("*"):
+        if not file.is_file() or file.is_symlink():
+            continue
+        if file.suffix in {".so", ".dylib"} or file.parent.name == "bin":
+            resolved = file.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            targets.append(file)
+    return targets
+
+
+def bundle_macos_runtime_dependencies(python_dir: Path) -> None:
+    bundled_lib_dir = python_dir / "lib" / "bundled-dylibs"
+    bundled_lib_dir.mkdir(parents=True, exist_ok=True)
+
+    copied_libraries: dict[str, Path] = {}
+    pending = macos_load_targets(python_dir)
+    processed: set[Path] = set()
+
+    while pending:
+        binary = pending.pop()
+        resolved_binary = binary.resolve()
+        if resolved_binary in processed:
+            continue
+        processed.add(resolved_binary)
+
+        for dependency in otool_dependencies(binary):
+            if not is_macos_external_dependency(dependency):
+                continue
+
+            source_path = Path(dependency)
+            if not source_path.exists():
+                raise RuntimeError(
+                    f"Missing macOS runtime dependency {dependency} referenced by {binary}"
+                )
+
+            bundled_path = copied_libraries.get(dependency)
+            if bundled_path is None:
+                bundled_path = bundled_lib_dir / source_path.name
+                if bundled_path.exists() and not bundled_path.samefile(source_path):
+                    raise RuntimeError(
+                        f"Conflicting bundled library name for {dependency}: {bundled_path.name}"
+                    )
+                if not bundled_path.exists():
+                    shutil.copy2(source_path, bundled_path)
+                    ensure_writable(bundled_path)
+                    run(
+                        [
+                            "install_name_tool",
+                            "-id",
+                            f"@loader_path/{bundled_path.name}",
+                            str(bundled_path),
+                        ]
+                    )
+                copied_libraries[dependency] = bundled_path
+                pending.append(bundled_path)
+
+            new_reference = relative_loader_reference(binary, bundled_path)
+            run(
+                [
+                    "install_name_tool",
+                    "-change",
+                    dependency,
+                    new_reference,
+                    str(binary),
+                ]
+            )
 
 
 def build_unix(version: str, stage_dir: Path, target_os: str) -> None:
@@ -340,6 +457,8 @@ def build_unix(version: str, stage_dir: Path, target_os: str) -> None:
     cpu_count = os.cpu_count() or 2
     run(["make", f"-j{cpu_count}"], cwd=src_dir, env=env)
     run(["make", "install"], cwd=src_dir, env=env)
+    if target_os == "macos":
+        bundle_macos_runtime_dependencies(python_dir)
 
 
 def write_metadata(
