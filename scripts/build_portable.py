@@ -575,17 +575,36 @@ def main() -> None:
     parser.add_argument("--target-os", choices=["windows", "linux", "macos"])
     parser.add_argument("--target-arch", choices=["x86_64", "arm64"])
     parser.add_argument("--output-dir", default="dist")
+    parser.add_argument(
+        "--cpython-tag",
+        help="CPython Git tag name (example: v3.13.13). When provided together with "
+             "--cpython-tag-commit-sha, skips the GitHub API call to resolve tag metadata.",
+    )
+    parser.add_argument(
+        "--cpython-tag-commit-sha",
+        help="Commit SHA that the CPython Git tag points to. Required when --cpython-tag is used.",
+    )
     args = parser.parse_args()
 
     ensure_windows_admin()
 
-    tag_refs = fetch_tag_refs()
-    if args.python_version:
+    if args.cpython_tag and args.cpython_tag_commit_sha:
+        if not args.python_version:
+            raise RuntimeError("--cpython-tag requires --python-version")
         version = args.python_version
-        cpython_release = details_for_version(tag_refs, version)
+        cpython_release: dict[str, str] = {
+            "version": version,
+            "tag": args.cpython_tag,
+            "tag_commit_sha": args.cpython_tag_commit_sha,
+        }
     else:
-        cpython_release = latest_detail_for_major(tag_refs, args.major)
-        version = cpython_release["version"]
+        tag_refs = fetch_tag_refs()
+        if args.python_version:
+            version = args.python_version
+            cpython_release = details_for_version(tag_refs, version)
+        else:
+            cpython_release = latest_detail_for_major(tag_refs, args.major)
+            version = cpython_release["version"]
     target_os = args.target_os or detect_target_os()
     target_arch = args.target_arch or detect_target_arch()
     base_name = f"python-{version}-{target_os}-{target_arch}"

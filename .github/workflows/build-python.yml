@@ -82,6 +82,7 @@ jobs:
           from pathlib import Path
 
           plan = json.loads(Path("release-plan.json").read_text(encoding="utf-8"))
+          resolved = json.loads(Path("resolved-details.json").read_text(encoding="utf-8"))
           versions = plan["changed_versions"]
           targets = [
               {
@@ -112,6 +113,9 @@ jobs:
 
           include = []
           for major, full_version in versions.items():
+              detail = resolved.get(major, {})
+              cpython_tag = detail.get("tag", f"v{full_version}")
+              cpython_tag_commit_sha = detail.get("tag_commit_sha", "")
               for target in targets:
                   artifact_name = (
                       f"python-{full_version}-{target['target_os']}-{target['target_arch']}"
@@ -120,6 +124,8 @@ jobs:
                       {
                           "major": major,
                           "python_version": full_version,
+                          "cpython_tag": cpython_tag,
+                          "cpython_tag_commit_sha": cpython_tag_commit_sha,
                           "artifact_name": artifact_name,
                           "archive_name": f"{artifact_name}{target['archive_ext']}",
                           **target,
@@ -203,6 +209,8 @@ jobs:
           python scripts/build_portable.py \
             "${{ matrix.major }}" \
             --python-version "${{ matrix.python_version }}" \
+            --cpython-tag "${{ matrix.cpython_tag }}" \
+            --cpython-tag-commit-sha "${{ matrix.cpython_tag_commit_sha }}" \
             --target-os "${{ matrix.target_os }}" \
             --target-arch "${{ matrix.target_arch }}" \
             --output-dir dist
