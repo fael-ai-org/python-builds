@@ -1,0 +1,88 @@
+name: Check for New Python Versions
+
+on:
+  schedule:
+    - cron: "0 4 * * 1"  # Every Monday at 4:00 AM UTC
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: "Trigger a build even if no new versions are detected."
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Resolve latest Python patch versions
+        id: resolve
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/resolve_latest_patch.py \
+            --majors-file config/majors.json \
+            --details > resolved-details.json
+          cat resolved-details.json
+
+      - name: Check for new versions against release state
+        id: check
+        env:
+          FORCE_BUILD: ${{ github.event.inputs.force_build || 'false' }}
+        run: |
+          set -euo pipefail
+
+          python scripts/plan_release.py \
+            --resolved-file resolved-details.json \
+            --state-file release-state/latest.json > release-plan.json
+          cat release-plan.json
+
+          SHOULD_BUILD=$(jq -r '.should_build' release-plan.json)
+
+          if [ "${FORCE_BUILD}" = "true" ]; then
+            SHOULD_BUILD="true"
+          fi
+
+          echo "should_build=${SHOULD_BUILD}" >> "$GITHUB_OUTPUT"
+
+          if [ "${SHOULD_BUILD}" = "true" ]; then
+            echo "New Python version(s) detected — triggering build."
+          else
+            echo "No new Python versions — skipping build."
+          fi
+
+      - name: Trigger build workflow
+        if: steps.check.outputs.should_build == 'true'
+        env:
+          FORCE_BUILD: ${{ github.event.inputs.force_build || 'false' }}
+        run: |
+          set -euo pipefail
+
+          PAYLOAD="{\"ref\":\"${{ github.ref_name }}\"}"
+          if [ "${FORCE_BUILD}" = "true" ]; then
+            PAYLOAD="{\"ref\":\"${{ github.ref_name }}\",\"inputs\":{\"force_rebuild\":\"true\"}}"
+          fi
+
+          curl -sS -L \
+            -X POST \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/actions/workflows/build-python.yml/dispatches" \
+            -d "${PAYLOAD}"
+
+          echo "Build workflow dispatched."
