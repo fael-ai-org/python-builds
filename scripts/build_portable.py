@@ -376,7 +376,9 @@ def bundle_macos_runtime_dependencies(python_dir: Path) -> None:
     bundled_lib_dir = python_dir / "lib" / "bundled-dylibs"
     bundled_lib_dir.mkdir(parents=True, exist_ok=True)
 
-    copied_libraries: dict[str, Path] = {}
+    # Key by *resolved* (canonical) source path so that the opt/ symlink and the
+    # Cellar/ real path for the same dylib are treated as identical.
+    copied_by_resolved: dict[str, Path] = {}
     pending = macos_load_targets(python_dir)
     processed: set[Path] = set()
 
@@ -397,25 +399,31 @@ def bundle_macos_runtime_dependencies(python_dir: Path) -> None:
                     f"Missing macOS runtime dependency {dependency} referenced by {binary}"
                 )
 
-            bundled_path = copied_libraries.get(dependency)
+            # Resolve symlinks: /opt/homebrew/opt/foo/lib/libfoo.dylib and
+            # /opt/homebrew/Cellar/foo/x.y.z/lib/libfoo.dylib both resolve to
+            # the same canonical path and must share one bundled copy.
+            resolved_source = str(source_path.resolve())
+            bundled_path = copied_by_resolved.get(resolved_source)
             if bundled_path is None:
                 bundled_path = bundled_lib_dir / source_path.name
-                if bundled_path.exists() and not bundled_path.samefile(source_path):
+                if bundled_path.exists():
+                    # Same filename but a different physical file — genuine collision.
                     raise RuntimeError(
-                        f"Conflicting bundled library name for {dependency}: {bundled_path.name}"
+                        f"Conflicting bundled library name: {source_path.name} is required by "
+                        f"{resolved_source} but a file with that name was already bundled "
+                        f"from a different source."
                     )
-                if not bundled_path.exists():
-                    shutil.copy2(source_path, bundled_path)
-                    ensure_writable(bundled_path)
-                    run(
-                        [
-                            "install_name_tool",
-                            "-id",
-                            f"@loader_path/{bundled_path.name}",
-                            str(bundled_path),
-                        ]
-                    )
-                copied_libraries[dependency] = bundled_path
+                shutil.copy2(resolved_source, bundled_path)
+                ensure_writable(bundled_path)
+                run(
+                    [
+                        "install_name_tool",
+                        "-id",
+                        f"@loader_path/{bundled_path.name}",
+                        str(bundled_path),
+                    ]
+                )
+                copied_by_resolved[resolved_source] = bundled_path
                 pending.append(bundled_path)
 
             new_reference = relative_loader_reference(binary, bundled_path)
