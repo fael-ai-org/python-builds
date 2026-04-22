@@ -11,6 +11,30 @@ on:
         options:
           - "false"
           - "true"
+      major_filter:
+        description: "Optional major to rebuild (example: 3.11)."
+        required: false
+        default: ""
+        type: string
+      target_os_filter:
+        description: "Optional target OS filter."
+        required: false
+        default: "any"
+        type: choice
+        options:
+          - any
+          - linux
+          - windows
+          - macos
+      target_arch_filter:
+        description: "Optional target architecture filter."
+        required: false
+        default: "any"
+        type: choice
+        options:
+          - any
+          - x86_64
+          - arm64
       release_tag:
         description: "Optional release tag (example: 2026.04.16). If set, create GitHub release."
         required: false
@@ -31,6 +55,7 @@ jobs:
       release_plan_json: ${{ steps.plan.outputs.release_plan_json }}
       release_tag: ${{ steps.plan.outputs.release_tag }}
       matrix: ${{ steps.make-matrix.outputs.matrix }}
+      matrix_has_entries: ${{ steps.make-matrix.outputs.matrix_has_entries }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -51,11 +76,19 @@ jobs:
         env:
           FORCE_REBUILD: ${{ github.event.inputs.force_rebuild || 'false' }}
           RELEASE_TAG_INPUT: ${{ github.event.inputs.release_tag || '' }}
+          MAJOR_FILTER_INPUT: ${{ github.event.inputs.major_filter || '' }}
+          TARGET_OS_FILTER_INPUT: ${{ github.event.inputs.target_os_filter || 'any' }}
+          TARGET_ARCH_FILTER_INPUT: ${{ github.event.inputs.target_arch_filter || 'any' }}
         run: |
           set -euo pipefail
 
           PLAN_ARGS=()
-          if [ "${FORCE_REBUILD}" = "true" ]; then
+          FORCE_REBUILD_EFFECTIVE="${FORCE_REBUILD}"
+          if [ -n "${MAJOR_FILTER_INPUT}" ] || [ "${TARGET_OS_FILTER_INPUT}" != "any" ] || [ "${TARGET_ARCH_FILTER_INPUT}" != "any" ]; then
+            FORCE_REBUILD_EFFECTIVE="true"
+          fi
+
+          if [ "${FORCE_REBUILD_EFFECTIVE}" = "true" ]; then
             PLAN_ARGS+=(--force)
           fi
           if [ -n "${RELEASE_TAG_INPUT}" ]; then
@@ -75,6 +108,10 @@ jobs:
           echo "release_tag=$(jq -r '.release_tag' release-plan.json)" >> "$GITHUB_OUTPUT"
 
       - id: make-matrix
+        env:
+          MAJOR_FILTER_INPUT: ${{ github.event.inputs.major_filter || '' }}
+          TARGET_OS_FILTER_INPUT: ${{ github.event.inputs.target_os_filter || 'any' }}
+          TARGET_ARCH_FILTER_INPUT: ${{ github.event.inputs.target_arch_filter || 'any' }}
         shell: python
         run: |
           import json
@@ -84,6 +121,17 @@ jobs:
           plan = json.loads(Path("release-plan.json").read_text(encoding="utf-8"))
           resolved = json.loads(Path("resolved-details.json").read_text(encoding="utf-8"))
           versions = plan["changed_versions"]
+          major_filter = os.environ.get("MAJOR_FILTER_INPUT", "").strip()
+          target_os_filter = os.environ.get("TARGET_OS_FILTER_INPUT", "any").strip().lower() or "any"
+          target_arch_filter = os.environ.get("TARGET_ARCH_FILTER_INPUT", "any").strip().lower() or "any"
+
+          valid_os_filters = {"any", "linux", "windows", "macos"}
+          valid_arch_filters = {"any", "x86_64", "arm64"}
+          if target_os_filter not in valid_os_filters:
+              raise SystemExit(f"Invalid target_os_filter: {target_os_filter}")
+          if target_arch_filter not in valid_arch_filters:
+              raise SystemExit(f"Invalid target_arch_filter: {target_arch_filter}")
+
           targets = [
               {
                   "runner": "ubuntu-24.04",
@@ -113,10 +161,18 @@ jobs:
 
           include = []
           for major, full_version in versions.items():
+              if major_filter and major != major_filter:
+                  continue
+
               detail = resolved.get(major, {})
               cpython_tag = detail.get("tag", f"v{full_version}")
               cpython_tag_commit_sha = detail.get("tag_commit_sha", "")
               for target in targets:
+                  if target_os_filter != "any" and target["target_os"] != target_os_filter:
+                      continue
+                  if target_arch_filter != "any" and target["target_arch"] != target_arch_filter:
+                      continue
+
                   artifact_name = (
                       f"python-{full_version}-{target['target_os']}-{target['target_arch']}"
                   )
@@ -132,10 +188,17 @@ jobs:
                       }
                   )
 
+          if versions and not include:
+              raise SystemExit(
+                  "Selected filters produced an empty build matrix. "
+                  "Check major_filter/target_os_filter/target_arch_filter values."
+              )
+
           matrix = {"include": include}
           line = f"matrix={json.dumps(matrix)}"
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
               fh.write(line + "\n")
+              fh.write(f"matrix_has_entries={'true' if include else 'false'}\n")
 
   validate-scripts:
     needs: check-upstream
@@ -167,7 +230,7 @@ jobs:
 
   build:
     needs: [check-upstream, validate-scripts]
-    if: needs.check-upstream.outputs.should_build == 'true'
+    if: needs.check-upstream.outputs.should_build == 'true' && needs.check-upstream.outputs.matrix_has_entries == 'true'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -228,7 +291,7 @@ jobs:
 
   validate-artifacts:
     needs: [check-upstream, build]
-    if: needs.check-upstream.outputs.should_build == 'true'
+    if: needs.check-upstream.outputs.should_build == 'true' && needs.check-upstream.outputs.matrix_has_entries == 'true'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -255,7 +318,7 @@ jobs:
             --full-timeout-seconds 5
 
   release:
-    if: needs.check-upstream.outputs.should_build == 'true'
+    if: needs.check-upstream.outputs.should_build == 'true' && needs.check-upstream.outputs.matrix_has_entries == 'true'
     needs: [check-upstream, validate-artifacts]
     runs-on: ubuntu-latest
     permissions:
