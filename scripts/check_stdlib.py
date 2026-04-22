@@ -106,6 +106,10 @@ def expected_missing_for_platform(name: str, platform_name: str) -> bool:
     macos_only = {
         "_scproxy",
     }
+    ios_only = {
+        # Added in 3.13; only present on actual iOS runtime.
+        "_ios_support",
+    }
     non_windows_posix = {
         "posix",
         "pwd",
@@ -116,21 +120,35 @@ def expected_missing_for_platform(name: str, platform_name: str) -> bool:
         "fcntl",
         "resource",
         "syslog",
+        # curses — terminal UI library; built only on Unix.
+        "_curses",
+        "_curses_panel",
+        "curses",
+        # Unix shared-memory / subprocess helpers.
+        "_posixshmem",
+        "_posixsubprocess",
+        # GNU readline (replaced by pyreadline/prompt_toolkit on Windows).
+        "readline",
+        # Legacy Unix-only modules removed in 3.13.
+        "_crypt",
+        "crypt",
+        "nis",
+        # Unix dbm backends.
+        "_dbm",
+        "_gdbm",
     }
     linux_like_only = {
         "ossaudiodev",
         "spwd",
     }
-    optional_extension_modules = {
-        "_gdbm",
-    }
+    optional_extension_modules: set[str] = set()
 
     if platform_name.startswith("win"):
-        return name in (non_windows_posix | linux_like_only | macos_only)
+        return name in (non_windows_posix | linux_like_only | macos_only | ios_only)
     if platform_name == "darwin":
-        return name in (windows_only | linux_like_only | optional_extension_modules)
+        return name in (windows_only | linux_like_only | ios_only | optional_extension_modules)
     # linux and other posix-like targets
-    return name in (windows_only | macos_only | optional_extension_modules)
+    return name in (windows_only | macos_only | ios_only | optional_extension_modules)
 
 
 def import_module_subprocess(python_exe: str, name: str, timeout_s: int) -> str | None:
