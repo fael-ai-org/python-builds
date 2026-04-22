@@ -294,15 +294,33 @@ def macos_dependency_prefixes() -> tuple[str, ...]:
     )
 
 
-def unix_build_env(target_os: str) -> dict[str, str]:
+def preferred_macos_tcl_formula(python_version: str) -> str:
+    # CPython 3.11 builds on macOS are more reliable with Tcl/Tk 8.6.
+    if python_version.startswith("3.11."):
+        return "tcl-tk@8"
+    return "tcl-tk"
+
+
+def unix_build_env(target_os: str, python_version: str) -> dict[str, str]:
     env = os.environ.copy()
     if target_os != "macos":
         return env
 
+    tcl_formula = preferred_macos_tcl_formula(python_version)
+    tcl_prefix = brew_prefix(tcl_formula)
+    if tcl_prefix is None and tcl_formula != "tcl-tk":
+        # Fallback keeps local builds working if only the unversioned formula exists.
+        tcl_prefix = brew_prefix("tcl-tk")
+        if tcl_prefix is not None:
+            print(
+                f"Warning: {tcl_formula} not found; falling back to tcl-tk for {python_version}."
+            )
+
     prefixes = [
         brew_prefix(formula)
-        for formula in ["openssl@3", "sqlite", "xz", "zlib", "tcl-tk"]
+        for formula in ["openssl@3", "sqlite", "xz", "zlib"]
     ]
+    prefixes.append(tcl_prefix)
     prefixes = [prefix for prefix in prefixes if prefix is not None]
 
     include_dirs = [prefix / "include" for prefix in prefixes]
@@ -451,7 +469,7 @@ def build_unix(version: str, stage_dir: Path, target_os: str) -> None:
         tf.extractall(stage_dir)
 
     python_dir = stage_dir / "python"
-    env = unix_build_env(target_os)
+    env = unix_build_env(target_os, version)
     run(
         [
             "./configure",

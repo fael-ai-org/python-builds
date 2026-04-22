@@ -106,6 +106,7 @@ def main() -> int:
 
         fast_exit, fast_payload = run_check(checker, packaged_python, "fast", args.full_timeout_seconds)
         full_exit, full_payload = run_check(checker, packaged_python, "full", args.full_timeout_seconds)
+        full_unexpected_failures = int(full_payload.get("unexpected_failure_count", 0)) > 0
 
         stdlib_compare = None
         compare_failed = False
@@ -125,9 +126,9 @@ def main() -> int:
         }
         print(json.dumps(summary, indent=2))
 
-        # Fast checks are the release gate. Full sweep remains diagnostic because
-        # portable builds can legitimately omit some platform-specific/optional modules.
-        if fast_exit != 0 or compare_failed:
+        # Fast checks and full-mode unexpected failures are release gates.
+        # Platform-specific/optional modules are handled in check_stdlib.py.
+        if fast_exit != 0 or full_unexpected_failures or compare_failed:
             return 1
     return 0
 

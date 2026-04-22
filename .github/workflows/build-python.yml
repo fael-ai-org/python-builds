@@ -200,7 +200,11 @@ jobs:
         if: matrix.target_os == 'macos'
         run: |
           brew update
-          brew install openssl@3 sqlite xz zlib tcl-tk
+          if [[ "${{ matrix.python_version }}" == 3.11.* ]]; then
+            brew install openssl@3 sqlite xz zlib tcl-tk@8
+          else
+            brew install openssl@3 sqlite xz zlib tcl-tk
+          fi
 
       - name: Build archive
         shell: bash

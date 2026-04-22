@@ -96,6 +96,7 @@ def expected_missing_for_platform(name: str, platform_name: str) -> bool:
         "_msi",
         "_overlapped",
         "_winapi",
+        "_wmi",
         "msilib",
         "msvcrt",
         "nt",
