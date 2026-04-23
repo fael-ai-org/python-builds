@@ -50,15 +50,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Derive the expected tag from resolved versions (sorted by major key)
-          RELEASE_TAG=$(python3 - <<'PYEOF'
-import json
-data = json.load(open('resolved-details.json'))
-versions = sorted((major, info['version']) for major, info in data.items())
-slug = '-'.join(v for _, v in versions)
-print(f'python-{slug}')
-PYEOF
-          )
+          # Derive the expected tag from resolved versions (sorted)
+          RELEASE_TAG="python-$(jq -r '[to_entries[] | .value.version] | sort | join("-")' resolved-details.json)"
 
           echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
 
