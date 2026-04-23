@@ -26,6 +26,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Fetch tags
+        run: git fetch --tags --force --prune --prune-tags
+
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
@@ -40,30 +43,36 @@ jobs:
             --details > resolved-details.json
           cat resolved-details.json
 
-      - name: Check for new versions against release state
+      - name: Check if release tag already exists
         id: check
         env:
           FORCE_BUILD: ${{ github.event.inputs.force_build || 'false' }}
         run: |
           set -euo pipefail
 
-          python scripts/plan_release.py \
-            --resolved-file resolved-details.json \
-            --state-file release-state/latest.json > release-plan.json
-          cat release-plan.json
+          # Derive the expected tag from resolved versions (sorted by major key)
+          RELEASE_TAG=$(python3 -c "
+import json
+data = json.load(open('resolved-details.json'))
+versions = sorted((major, info['version']) for major, info in data.items())
+slug = '-'.join(v for _, v in versions)
+print(f'python-{slug}')
+")
 
-          SHOULD_BUILD=$(jq -r '.should_build' release-plan.json)
+          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
 
-          if [ "${FORCE_BUILD}" = "true" ]; then
-            SHOULD_BUILD="true"
+          if git ls-remote --exit-code --tags origin "refs/tags/${RELEASE_TAG}" > /dev/null 2>&1; then
+            echo "Tag ${RELEASE_TAG} already exists — no build needed."
+            TAG_EXISTS="true"
+          else
+            echo "Tag ${RELEASE_TAG} not found — build needed."
+            TAG_EXISTS="false"
           fi
 
-          echo "should_build=${SHOULD_BUILD}" >> "$GITHUB_OUTPUT"
-
-          if [ "${SHOULD_BUILD}" = "true" ]; then
-            echo "New Python version(s) detected — triggering build."
+          if [ "${TAG_EXISTS}" = "false" ] || [ "${FORCE_BUILD}" = "true" ]; then
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
           else
-            echo "No new Python versions — skipping build."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Trigger build workflow
