@@ -141,7 +141,9 @@ def expected_missing_for_platform(name: str, platform_name: str) -> bool:
         "ossaudiodev",
         "spwd",
     }
-    optional_extension_modules: set[str] = set()
+    # These depend on optional system libraries (libgdbm-dev, libnsl-dev) that may
+    # not be present in the build environment; nis is also removed in Python 3.13.
+    optional_extension_modules: set[str] = {"_dbm", "_gdbm", "nis"}
 
     if platform_name.startswith("win"):
         return name in (non_windows_posix | linux_like_only | macos_only | ios_only)
