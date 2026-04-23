@@ -408,7 +408,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.push-tag.outputs.tag_name }}
-          name: Source-built Portable Python Bundle
+          name: "Portable Python ${{ needs.check-upstream.outputs.release_tag }}"
           fail_on_unmatched_files: true
           generate_release_notes: true
           files: release-assets/*

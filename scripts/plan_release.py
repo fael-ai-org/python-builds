@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -44,13 +43,9 @@ def default_release_tag(
     has_actual_changes: bool,
     force: bool,
 ) -> str:
-    if has_actual_changes:
+    if has_actual_changes or force:
         version_slug = "-".join(current_versions[major] for major in sorted(current_versions))
         return f"python-{version_slug}"
-
-    if force:
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%SZ")
-        return f"python-force-{timestamp}"
 
     return ""
 
