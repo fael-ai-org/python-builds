@@ -71,15 +71,12 @@ jobs:
 
       - name: Trigger build workflow
         if: steps.check.outputs.should_build == 'true'
-        env:
-          FORCE_BUILD: ${{ github.event.inputs.force_build || 'false' }}
         run: |
           set -euo pipefail
 
-          PAYLOAD="{\"ref\":\"${{ github.ref_name }}\"}"
-          if [ "${FORCE_BUILD}" = "true" ]; then
-            PAYLOAD="{\"ref\":\"${{ github.ref_name }}\",\"inputs\":{\"force_rebuild\":\"true\"}}"
-          fi
+          # Always force rebuild — the tag check is the gate; the build workflow's
+          # own state-file comparison would otherwise say "no changes" and skip everything.
+          PAYLOAD="{\"ref\":\"${{ github.ref_name }}\",\"inputs\":{\"force_rebuild\":\"true\"}}"
 
           curl -sS -L \
             -X POST \
