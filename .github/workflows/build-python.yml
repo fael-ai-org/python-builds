@@ -240,23 +240,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install build dependencies (Linux)
-        if: matrix.target_os == 'linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            pkg-config \
-            libssl-dev \
-            zlib1g-dev \
-            libbz2-dev \
-            libreadline-dev \
-            libsqlite3-dev \
-            libffi-dev \
-            liblzma-dev \
-            tk-dev \
-            uuid-dev
-
       - name: Install build dependencies (macOS)
         if: matrix.target_os == 'macos'
         run: |
@@ -271,20 +254,36 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python scripts/build_portable.py \
-            "${{ matrix.major }}" \
-            --python-version "${{ matrix.python_version }}" \
-            --cpython-tag "${{ matrix.cpython_tag }}" \
-            --cpython-tag-commit-sha "${{ matrix.cpython_tag_commit_sha }}" \
-            --target-os "${{ matrix.target_os }}" \
-            --target-arch "${{ matrix.target_arch }}" \
-            --output-dir dist
+          if [[ "${{ matrix.target_os }}" == "linux" ]]; then
+            docker run --rm \
+              -v "$PWD:/work" \
+              quay.io/pypa/manylinux2014_x86_64 \
+              bash -c "cd /work && /opt/python/cp312-cp312/bin/python scripts/build_portable.py \
+                '${{ matrix.major }}' \
+                --python-version '${{ matrix.python_version }}' \
+                --cpython-tag '${{ matrix.cpython_tag }}' \
+                --cpython-tag-commit-sha '${{ matrix.cpython_tag_commit_sha }}' \
+                --target-os '${{ matrix.target_os }}' \
+                --target-arch '${{ matrix.target_arch }}' \
+                --output-dir dist"
+          else
+            python scripts/build_portable.py \
+              "${{ matrix.major }}" \
+              --python-version "${{ matrix.python_version }}" \
+              --cpython-tag "${{ matrix.cpython_tag }}" \
+              --cpython-tag-commit-sha "${{ matrix.cpython_tag_commit_sha }}" \
+              --target-os "${{ matrix.target_os }}" \
+              --target-arch "${{ matrix.target_arch }}" \
+              --output-dir dist
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_name }}
-          path: dist/${{ matrix.archive_name }}
+          path: |
+            dist/${{ matrix.archive_name }}
+            dist/${{ matrix.archive_name }}.sha256
           if-no-files-found: error
 
   validate-artifacts:
@@ -340,7 +339,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd release-assets
-          sha256sum * > SHA256SUMS.txt
+          find . -maxdepth 1 -type f ! -name '*.sha256' | sort | xargs sha256sum > SHA256SUMS.txt
 
       - name: Restore release plan
         run: |

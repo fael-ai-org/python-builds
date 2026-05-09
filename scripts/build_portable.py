@@ -301,10 +301,14 @@ def preferred_macos_tcl_formula(python_version: str) -> str:
     return "tcl-tk"
 
 
-def unix_build_env(target_os: str, python_version: str) -> dict[str, str]:
+def unix_build_env(target_os: str, python_version: str, target_arch: str = "x86_64") -> dict[str, str]:
     env = os.environ.copy()
     if target_os != "macos":
         return env
+
+    deployment_target = "11.0" if target_arch == "arm64" else "10.15"
+    env["MACOSX_DEPLOYMENT_TARGET"] = deployment_target
+    min_flag = f"-mmacosx-version-min={deployment_target}"
 
     tcl_formula = preferred_macos_tcl_formula(python_version)
     tcl_prefix = brew_prefix(tcl_formula)
@@ -336,7 +340,8 @@ def unix_build_env(target_os: str, python_version: str) -> dict[str, str]:
 
     prepend_env_paths(env, "PKG_CONFIG_PATH", pkgconfig_dirs)
     prepend_env_flags(env, "CPPFLAGS", [f"-I{path}" for path in include_dirs if path.exists()])
-    prepend_env_flags(env, "LDFLAGS", [f"-L{path}" for path in lib_dirs if path.exists()])
+    prepend_env_flags(env, "CFLAGS", [min_flag])
+    prepend_env_flags(env, "LDFLAGS", [f"-L{path}" for path in lib_dirs if path.exists()] + [min_flag])
     return env
 
 
@@ -456,7 +461,35 @@ def bundle_macos_runtime_dependencies(python_dir: Path) -> None:
             )
 
 
-def build_unix(version: str, stage_dir: Path, target_os: str) -> None:
+def rewrite_linux_rpaths(python_dir: Path) -> None:
+    python_bin = python_dir / "bin" / "python3"
+    if python_bin.exists() and not python_bin.is_symlink():
+        run(["patchelf", "--set-rpath", "$ORIGIN/../lib", str(python_bin)])
+    for so in sorted(python_dir.rglob("*.so")):
+        if so.is_file() and not so.is_symlink():
+            run(["patchelf", "--set-rpath", "$ORIGIN/../lib", str(so)])
+
+
+def strip_binaries(python_dir: Path, target_os: str) -> None:
+    python_bin = python_dir / "bin" / "python3"
+    if python_bin.exists() and not python_bin.is_symlink():
+        run(["strip", str(python_bin)])
+    for so in sorted(python_dir.rglob("*.so")):
+        if so.is_file() and not so.is_symlink():
+            run(["strip", "-S", str(so)])
+    if target_os == "macos":
+        for dylib in sorted(python_dir.rglob("*.dylib")):
+            if dylib.is_file() and not dylib.is_symlink():
+                run(["strip", "-S", str(dylib)])
+
+
+def codesign_macos(python_dir: Path) -> None:
+    python_bin = python_dir / "bin" / "python3"
+    if python_bin.exists():
+        run(["codesign", "--sign", "-", "--force", "--deep", str(python_bin)])
+
+
+def build_unix(version: str, stage_dir: Path, target_os: str, target_arch: str = "x86_64") -> None:
     archive, _, verified = download_verified_source(version, stage_dir)
     if not verified:
         print(
@@ -469,7 +502,7 @@ def build_unix(version: str, stage_dir: Path, target_os: str) -> None:
         tf.extractall(stage_dir)
 
     python_dir = stage_dir / "python"
-    env = unix_build_env(target_os, version)
+    env = unix_build_env(target_os, version, target_arch)
     run(
         [
             "./configure",
@@ -483,8 +516,13 @@ def build_unix(version: str, stage_dir: Path, target_os: str) -> None:
     cpu_count = os.cpu_count() or 2
     run(["make", f"-j{cpu_count}"], cwd=src_dir, env=env)
     run(["make", "install"], cwd=src_dir, env=env)
+    if target_os == "linux":
+        rewrite_linux_rpaths(python_dir)
     if target_os == "macos":
         bundle_macos_runtime_dependencies(python_dir)
+    strip_binaries(python_dir, target_os)
+    if target_os == "macos":
+        codesign_macos(python_dir)
 
 
 def write_metadata(
@@ -650,7 +688,7 @@ def main() -> None:
         if source_archive.exists():
             source_sha256 = sha256sum(source_archive)
     else:
-        build_unix(version, stage_dir, target_os)
+        build_unix(version, stage_dir, target_os, target_arch)
         source_archive = stage_dir / f"Python-{version}.tgz"
         if source_archive.exists():
             source_sha256 = sha256sum(source_archive)
@@ -668,6 +706,9 @@ def main() -> None:
         cpython_release["tag_commit_sha"],
     )
     archive_path = package(stage_dir, root / args.output_dir, base_name, target_os)
+    checksum = sha256sum(archive_path)
+    sha256_path = Path(str(archive_path) + ".sha256")
+    sha256_path.write_text(f"{checksum}  {archive_path.name}\n", encoding="utf-8")
     print(str(archive_path))
 
 
