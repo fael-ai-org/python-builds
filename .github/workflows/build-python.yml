@@ -258,14 +258,26 @@ jobs:
             docker run --rm \
               -v "$PWD:/work" \
               quay.io/pypa/manylinux2014_x86_64 \
-              bash -c "cd /work && /opt/python/cp312-cp312/bin/python scripts/build_portable.py \
-                '${{ matrix.major }}' \
-                --python-version '${{ matrix.python_version }}' \
-                --cpython-tag '${{ matrix.cpython_tag }}' \
-                --cpython-tag-commit-sha '${{ matrix.cpython_tag_commit_sha }}' \
-                --target-os '${{ matrix.target_os }}' \
-                --target-arch '${{ matrix.target_arch }}' \
-                --output-dir dist"
+              bash -c "
+                yum install -y \
+                  libffi-devel \
+                  openssl-devel \
+                  sqlite-devel \
+                  bzip2-devel \
+                  xz-devel \
+                  readline-devel \
+                  ncurses-devel \
+                  libuuid-devel \
+                  tk-devel \
+                  patchelf && \
+                cd /work && /opt/python/cp312-cp312/bin/python scripts/build_portable.py \
+                  '${{ matrix.major }}' \
+                  --python-version '${{ matrix.python_version }}' \
+                  --cpython-tag '${{ matrix.cpython_tag }}' \
+                  --cpython-tag-commit-sha '${{ matrix.cpython_tag_commit_sha }}' \
+                  --target-os '${{ matrix.target_os }}' \
+                  --target-arch '${{ matrix.target_arch }}' \
+                  --output-dir dist"
           else
             python scripts/build_portable.py \
               "${{ matrix.major }}" \
