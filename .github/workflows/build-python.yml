@@ -261,6 +261,7 @@ jobs:
               bash -c "
                 yum install -y \
                   libffi-devel \
+                  pkgconfig \
                   openssl-devel \
                   sqlite-devel \
                   bzip2-devel \

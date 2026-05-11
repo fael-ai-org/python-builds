@@ -548,7 +548,6 @@ def build_unix(version: str, stage_dir: Path, target_os: str, target_arch: str =
     if target_os == "linux":
         openssl_prefix = manylinux_internal_prefix("openssl")
         if openssl_prefix is not None:
-            configure_args.append(f"--with-openssl={openssl_prefix}")
             configure_args.append("--with-openssl-rpath=auto")
 
     run(
