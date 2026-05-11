@@ -320,7 +320,9 @@ def unix_build_env(target_os: str, python_version: str, target_arch: str = "x86_
         openssl_prefix = manylinux_internal_prefix("openssl")
         if openssl_prefix is not None:
             include_dir = openssl_prefix / "include"
-            lib_dir = openssl_prefix / "lib"
+            lib_dirs = [
+                path for path in (openssl_prefix / "lib", openssl_prefix / "lib64") if path.exists()
+            ]
             pkgconfig_dirs = [
                 openssl_prefix / "lib" / "pkgconfig",
                 openssl_prefix / "lib64" / "pkgconfig",
@@ -333,12 +335,7 @@ def unix_build_env(target_os: str, python_version: str, target_arch: str = "x86_
             prepend_env_flags(
                 env,
                 "LDFLAGS",
-                [
-                    f"-L{lib_dir}",
-                    f"-Wl,-rpath-link,{lib_dir}",
-                ]
-                if lib_dir.exists()
-                else [],
+                [flag for lib_dir in lib_dirs for flag in (f"-L{lib_dir}", f"-Wl,-rpath-link,{lib_dir}")],
             )
         return env
 
@@ -552,6 +549,7 @@ def build_unix(version: str, stage_dir: Path, target_os: str, target_arch: str =
         openssl_prefix = manylinux_internal_prefix("openssl")
         if openssl_prefix is not None:
             configure_args.append(f"--with-openssl={openssl_prefix}")
+            configure_args.append("--with-openssl-rpath=auto")
 
     run(
         configure_args,
