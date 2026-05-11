@@ -301,8 +301,47 @@ def preferred_macos_tcl_formula(python_version: str) -> str:
     return "tcl-tk"
 
 
+def manylinux_internal_prefix(name: str) -> Path | None:
+    internal_root = Path("/opt/_internal")
+    if not internal_root.exists():
+        return None
+
+    matches = sorted(
+        path for path in internal_root.glob(f"{name}*") if path.is_dir()
+    )
+    if not matches:
+        return None
+    return matches[-1]
+
+
 def unix_build_env(target_os: str, python_version: str, target_arch: str = "x86_64") -> dict[str, str]:
     env = os.environ.copy()
+    if target_os == "linux":
+        openssl_prefix = manylinux_internal_prefix("openssl")
+        if openssl_prefix is not None:
+            include_dir = openssl_prefix / "include"
+            lib_dir = openssl_prefix / "lib"
+            pkgconfig_dirs = [
+                openssl_prefix / "lib" / "pkgconfig",
+                openssl_prefix / "lib64" / "pkgconfig",
+                openssl_prefix / "share" / "pkgconfig",
+            ]
+
+            print(f"Using manylinux internal OpenSSL from {openssl_prefix}")
+            prepend_env_paths(env, "PKG_CONFIG_PATH", pkgconfig_dirs)
+            prepend_env_flags(env, "CPPFLAGS", [f"-I{include_dir}"] if include_dir.exists() else [])
+            prepend_env_flags(
+                env,
+                "LDFLAGS",
+                [
+                    f"-L{lib_dir}",
+                    f"-Wl,-rpath-link,{lib_dir}",
+                ]
+                if lib_dir.exists()
+                else [],
+            )
+        return env
+
     if target_os != "macos":
         return env
 
@@ -503,13 +542,19 @@ def build_unix(version: str, stage_dir: Path, target_os: str, target_arch: str =
 
     python_dir = stage_dir / "python"
     env = unix_build_env(target_os, version, target_arch)
+    configure_args = [
+        "./configure",
+        f"--prefix={python_dir}",
+        "--with-ensurepip=install",
+        "--enable-optimizations",
+    ]
+    if target_os == "linux":
+        openssl_prefix = manylinux_internal_prefix("openssl")
+        if openssl_prefix is not None:
+            configure_args.append(f"--with-openssl={openssl_prefix}")
+
     run(
-        [
-            "./configure",
-            f"--prefix={python_dir}",
-            "--with-ensurepip=install",
-            "--enable-optimizations",
-        ],
+        configure_args,
         cwd=src_dir,
         env=env,
     )
