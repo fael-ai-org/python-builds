@@ -314,53 +314,14 @@ def manylinux_internal_prefix(name: str) -> Path | None:
     return matches[-1]
 
 
-def manylinux_openssl_configure_prefix(stage_dir: Path, openssl_prefix: Path) -> Path:
-    include_dir = openssl_prefix / "include"
-    lib_dir = openssl_prefix / "lib"
-    if include_dir.exists() and lib_dir.exists():
-        return openssl_prefix
-
-    fallback_lib_dir = openssl_prefix / "lib64"
-    if not include_dir.exists() or not fallback_lib_dir.exists():
-        return openssl_prefix
-
-    shim_root = stage_dir / ".manylinux-openssl"
-    if shim_root.exists() or shim_root.is_symlink():
-        if shim_root.is_symlink() or shim_root.is_file():
-            shim_root.unlink()
-        else:
-            shutil.rmtree(shim_root)
-
-    shim_root.mkdir(parents=True, exist_ok=True)
-    (shim_root / "include").symlink_to(include_dir, target_is_directory=True)
-    (shim_root / "lib").symlink_to(fallback_lib_dir, target_is_directory=True)
-    print(f"Using OpenSSL configure shim at {shim_root} -> {openssl_prefix}")
-    return shim_root
-
-
 def unix_build_env(target_os: str, python_version: str, target_arch: str = "x86_64") -> dict[str, str]:
     env = os.environ.copy()
     if target_os == "linux":
+        env.setdefault("CC", "gcc")
+        env.setdefault("CXX", "g++")
         openssl_prefix = manylinux_internal_prefix("openssl")
         if openssl_prefix is not None:
-            include_dir = openssl_prefix / "include"
-            lib_dirs = [
-                path for path in (openssl_prefix / "lib", openssl_prefix / "lib64") if path.exists()
-            ]
-            pkgconfig_dirs = [
-                openssl_prefix / "lib" / "pkgconfig",
-                openssl_prefix / "lib64" / "pkgconfig",
-                openssl_prefix / "share" / "pkgconfig",
-            ]
-
             print(f"Using manylinux internal OpenSSL from {openssl_prefix}")
-            prepend_env_paths(env, "PKG_CONFIG_PATH", pkgconfig_dirs)
-            prepend_env_flags(env, "CPPFLAGS", [f"-I{include_dir}"] if include_dir.exists() else [])
-            prepend_env_flags(
-                env,
-                "LDFLAGS",
-                [flag for lib_dir in lib_dirs for flag in (f"-L{lib_dir}", f"-Wl,-rpath-link,{lib_dir}")],
-            )
         return env
 
     if target_os != "macos":
@@ -549,6 +510,83 @@ def codesign_macos(python_dir: Path) -> None:
         run(["codesign", "--sign", "-", "--force", "--deep", str(python_bin)])
 
 
+def linux_dynload_module_exists(python_dir: Path, module_name: str) -> bool:
+    return any((python_dir / "lib").glob(f"python*/lib-dynload/{module_name}*.so"))
+
+
+def print_file_matches(path: Path, patterns: tuple[str, ...], limit: int = 40) -> None:
+    print(f"--- {path} ---")
+    if not path.exists():
+        print("missing")
+        return
+
+    matches = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        lower = line.lower()
+        if any(pattern in lower for pattern in patterns):
+            matches.append(line)
+
+    if not matches:
+        print("no matching lines found")
+        return
+
+    for line in matches[-limit:]:
+        print(line)
+
+
+def emit_linux_ssl_diagnostics(src_dir: Path, python_dir: Path) -> None:
+    print("Linux build did not produce _ssl; diagnostic excerpts follow.")
+    print_file_matches(
+        src_dir / "Modules" / "Setup.stdlib",
+        ("_ssl", "_hashlib"),
+        limit=20,
+    )
+    print_file_matches(
+        src_dir / "config.log",
+        (
+            "openssl",
+            "ac_cv_working_openssl_ssl",
+            "ac_cv_working_openssl_hashlib",
+            "ssl module",
+            "hashlib module",
+        ),
+        limit=80,
+    )
+
+    openssl_prefix = manylinux_internal_prefix("openssl")
+    if openssl_prefix is not None:
+        print(f"--- OpenSSL files under {openssl_prefix} ---")
+        for pattern in ("lib/libssl*", "lib/libcrypto*", "include/openssl/ssl.h"):
+            matches = sorted(openssl_prefix.glob(pattern))
+            if not matches:
+                print(f"{pattern}: missing")
+                continue
+            for match in matches:
+                print(match)
+
+    print("--- lib-dynload _ssl/_hashlib ---")
+    dynload_dirs = sorted((python_dir / "lib").glob("python*/lib-dynload"))
+    if not dynload_dirs:
+        print("lib-dynload directory missing")
+        return
+    for dynload_dir in dynload_dirs:
+        ssl_matches = sorted(dynload_dir.glob("_ssl*.so"))
+        hashlib_matches = sorted(dynload_dir.glob("_hashlib*.so"))
+        print(dynload_dir)
+        if not ssl_matches and not hashlib_matches:
+            print("no _ssl or _hashlib artifacts found")
+            continue
+        for match in ssl_matches + hashlib_matches:
+            print(match)
+
+
+def ensure_linux_ssl_module(src_dir: Path, python_dir: Path) -> None:
+    if linux_dynload_module_exists(python_dir, "_ssl"):
+        return
+    emit_linux_ssl_diagnostics(src_dir, python_dir)
+    raise RuntimeError("Linux build completed without producing the _ssl extension module.")
+
+
 def build_unix(version: str, stage_dir: Path, target_os: str, target_arch: str = "x86_64") -> None:
     archive, _, verified = download_verified_source(version, stage_dir)
     if not verified:
@@ -572,8 +610,7 @@ def build_unix(version: str, stage_dir: Path, target_os: str, target_arch: str =
     if target_os == "linux":
         openssl_prefix = manylinux_internal_prefix("openssl")
         if openssl_prefix is not None:
-            configure_prefix = manylinux_openssl_configure_prefix(stage_dir, openssl_prefix)
-            configure_args.append(f"--with-openssl={configure_prefix}")
+            configure_args.append(f"--with-openssl={openssl_prefix}")
             configure_args.append("--with-openssl-rpath=auto")
 
     run(
@@ -585,6 +622,7 @@ def build_unix(version: str, stage_dir: Path, target_os: str, target_arch: str =
     run(["make", f"-j{cpu_count}"], cwd=src_dir, env=env)
     run(["make", "install"], cwd=src_dir, env=env)
     if target_os == "linux":
+        ensure_linux_ssl_module(src_dir, python_dir)
         rewrite_linux_rpaths(python_dir)
     if target_os == "macos":
         bundle_macos_runtime_dependencies(python_dir)

@@ -262,7 +262,6 @@ jobs:
                 yum install -y \
                   libffi-devel \
                   pkgconfig \
-                  openssl-devel \
                   sqlite-devel \
                   bzip2-devel \
                   xz-devel \
