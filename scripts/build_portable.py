@@ -314,6 +314,30 @@ def manylinux_internal_prefix(name: str) -> Path | None:
     return matches[-1]
 
 
+def manylinux_openssl_configure_prefix(stage_dir: Path, openssl_prefix: Path) -> Path:
+    include_dir = openssl_prefix / "include"
+    lib_dir = openssl_prefix / "lib"
+    if include_dir.exists() and lib_dir.exists():
+        return openssl_prefix
+
+    fallback_lib_dir = openssl_prefix / "lib64"
+    if not include_dir.exists() or not fallback_lib_dir.exists():
+        return openssl_prefix
+
+    shim_root = stage_dir / ".manylinux-openssl"
+    if shim_root.exists() or shim_root.is_symlink():
+        if shim_root.is_symlink() or shim_root.is_file():
+            shim_root.unlink()
+        else:
+            shutil.rmtree(shim_root)
+
+    shim_root.mkdir(parents=True, exist_ok=True)
+    (shim_root / "include").symlink_to(include_dir, target_is_directory=True)
+    (shim_root / "lib").symlink_to(fallback_lib_dir, target_is_directory=True)
+    print(f"Using OpenSSL configure shim at {shim_root} -> {openssl_prefix}")
+    return shim_root
+
+
 def unix_build_env(target_os: str, python_version: str, target_arch: str = "x86_64") -> dict[str, str]:
     env = os.environ.copy()
     if target_os == "linux":
@@ -548,6 +572,8 @@ def build_unix(version: str, stage_dir: Path, target_os: str, target_arch: str =
     if target_os == "linux":
         openssl_prefix = manylinux_internal_prefix("openssl")
         if openssl_prefix is not None:
+            configure_prefix = manylinux_openssl_configure_prefix(stage_dir, openssl_prefix)
+            configure_args.append(f"--with-openssl={configure_prefix}")
             configure_args.append("--with-openssl-rpath=auto")
 
     run(
