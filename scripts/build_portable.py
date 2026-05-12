@@ -691,6 +691,87 @@ def rewrite_linux_rpaths(python_dir: Path) -> None:
             run(["patchelf", "--set-rpath", rpath, str(so)])
 
 
+def linux_runtime_dependencies(binary: Path) -> list[Path]:
+    result = subprocess.run(
+        ["ldd", str(binary)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    dependencies: list[Path] = []
+    for line in result.stdout.splitlines():
+        stripped = line.strip()
+        if not stripped or "not found" in stripped:
+            continue
+        if "=>" in stripped:
+            _, right = stripped.split("=>", 1)
+            candidate = right.strip().split(" ", 1)[0]
+        else:
+            candidate = stripped.split(" ", 1)[0]
+        if candidate.startswith("/"):
+            dependencies.append(Path(candidate))
+    return dependencies
+
+
+def should_bundle_linux_dependency(path: Path) -> bool:
+    excluded_prefixes = (
+        "/lib64/ld-linux",
+        "/lib64/libc.so",
+        "/lib64/libdl.so",
+        "/lib64/libm.so",
+        "/lib64/libpthread.so",
+        "/lib64/librt.so",
+        "/lib64/libutil.so",
+        "/lib64/libresolv.so",
+        "/lib64/libnsl.so",
+        "/usr/lib64/libc.so",
+        "/usr/lib64/libdl.so",
+        "/usr/lib64/libm.so",
+        "/usr/lib64/libpthread.so",
+        "/usr/lib64/librt.so",
+        "/usr/lib64/libutil.so",
+        "/usr/lib64/libresolv.so",
+        "/usr/lib64/libnsl.so",
+    )
+    path_str = str(path)
+    return not any(path_str.startswith(prefix) for prefix in excluded_prefixes)
+
+
+def bundle_linux_runtime_dependencies(python_dir: Path) -> None:
+    destination_dir = python_dir / "lib"
+    destination_dir.mkdir(parents=True, exist_ok=True)
+
+    pending: list[Path] = []
+    python_bin = python_dir / "bin" / "python3"
+    if python_bin.exists() and not python_bin.is_symlink():
+        pending.append(python_bin)
+    pending.extend(
+        so for so in sorted(python_dir.rglob("*.so")) if so.is_file() and not so.is_symlink()
+    )
+
+    scanned: set[Path] = set()
+    copied_names: set[str] = {path.name for path in destination_dir.iterdir() if path.is_file()}
+    while pending:
+        binary = pending.pop()
+        resolved_binary = binary.resolve()
+        if resolved_binary in scanned:
+            continue
+        scanned.add(resolved_binary)
+
+        for dependency in linux_runtime_dependencies(binary):
+            resolved_dependency = dependency.resolve()
+            if not should_bundle_linux_dependency(resolved_dependency):
+                continue
+            if python_dir in resolved_dependency.parents:
+                continue
+
+            destination = destination_dir / dependency.name
+            if dependency.name not in copied_names:
+                shutil.copy2(resolved_dependency, destination)
+                copied_names.add(dependency.name)
+            pending.append(resolved_dependency)
+
+
 def bundle_manylinux_openssl_runtime_libs(python_dir: Path, openssl_prefix: Path) -> None:
     runtime_lib_dir = openssl_prefix / "lib"
     if not runtime_lib_dir.exists():
@@ -861,6 +942,7 @@ def build_unix(version: str, stage_dir: Path, target_os: str, target_arch: str =
         sqlite_prefix = manylinux_internal_prefix("sqlite3")
         if sqlite_prefix is not None:
             bundle_manylinux_sqlite_runtime_libs(python_dir, sqlite_prefix)
+        bundle_linux_runtime_dependencies(python_dir)
         rewrite_linux_rpaths(python_dir)
     if target_os == "macos":
         bundle_macos_runtime_dependencies(python_dir)
