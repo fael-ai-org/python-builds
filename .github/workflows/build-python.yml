@@ -242,13 +242,23 @@ jobs:
 
       - name: Install build dependencies (macOS)
         if: matrix.target_os == 'macos'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_UPGRADE: "1"
         run: |
-          brew update
           if [[ "${{ matrix.python_version }}" == 3.11.* ]]; then
-            brew install openssl@3 sqlite xz zlib tcl-tk@8
+            formulas=(openssl@3 sqlite xz zlib tcl-tk@8)
           else
-            brew install openssl@3 sqlite xz zlib tcl-tk
+            formulas=(openssl@3 sqlite xz zlib tcl-tk)
           fi
+
+          for formula in "${formulas[@]}"; do
+            if brew list --versions "$formula" >/dev/null; then
+              echo "$formula already installed"
+              continue
+            fi
+            brew install "$formula"
+          done
 
       - name: Build archive
         shell: bash
