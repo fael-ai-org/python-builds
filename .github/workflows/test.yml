@@ -21,6 +21,8 @@ jobs:
           python-version: "3.12"
 
       - name: Resolve configured latest patch versions
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python scripts/resolve_latest_patch.py --majors-file config/majors.json > versions.json
           cat versions.json

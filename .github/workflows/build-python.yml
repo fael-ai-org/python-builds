@@ -265,7 +265,7 @@ jobs:
                   sqlite-devel \
                   bzip2-devel \
                   xz-devel \
-                  zstd-devel \
+                  libzstd-devel \
                   readline-devel \
                   ncurses-devel \
                   libuuid-devel \
