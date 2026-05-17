@@ -679,7 +679,7 @@ def bundle_macos_runtime_dependencies(python_dir: Path) -> None:
 
 def rewrite_linux_rpaths(python_dir: Path) -> None:
     python_bin = python_dir / "bin" / "python3"
-    if python_bin.exists() and not python_bin.is_symlink():
+    if python_bin.exists():
         run(["patchelf", "--set-rpath", "$ORIGIN/../lib", str(python_bin)])
     for so in sorted(python_dir.rglob("*.so")):
         if so.is_file() and not so.is_symlink():
@@ -743,7 +743,7 @@ def bundle_linux_runtime_dependencies(python_dir: Path) -> None:
 
     pending: list[Path] = []
     python_bin = python_dir / "bin" / "python3"
-    if python_bin.exists() and not python_bin.is_symlink():
+    if python_bin.exists():
         pending.append(python_bin)
     pending.extend(
         so for so in sorted(python_dir.rglob("*.so")) if so.is_file() and not so.is_symlink()
@@ -805,7 +805,7 @@ def bundle_manylinux_sqlite_runtime_libs(python_dir: Path, sqlite_prefix: Path) 
 
 def strip_binaries(python_dir: Path, target_os: str) -> None:
     python_bin = python_dir / "bin" / "python3"
-    if python_bin.exists() and not python_bin.is_symlink():
+    if python_bin.exists():
         run(["strip", str(python_bin)])
     for so in sorted(python_dir.rglob("*.so")):
         if so.is_file() and not so.is_symlink():

@@ -335,7 +335,8 @@ jobs:
           set -euo pipefail
           python scripts/validate_distribution.py \
             "dist-archive/${{ matrix.archive_name }}" \
-            --full-timeout-seconds 5
+            --full-timeout-seconds 5 \
+            2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
 
   release:
     if: needs.check-upstream.outputs.should_build == 'true' && needs.check-upstream.outputs.matrix_has_entries == 'true'
