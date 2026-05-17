@@ -145,6 +145,11 @@ def expected_missing_for_platform(name: str, platform_name: str) -> bool:
     # not be present in the build environment; nis is also removed in Python 3.13.
     optional_extension_modules: set[str] = {"_dbm", "_gdbm", "nis"}
 
+    # Python 3.14 adds Zstandard support via an optional external libzstd
+    # dependency. Source builds may legitimately omit these modules when the
+    # toolchain or runtime does not provide a compatible libzstd.
+    optional_extension_modules |= {"_zstd", "compression.zstd"}
+
     if platform_name.startswith("win"):
         return name in (non_windows_posix | linux_like_only | macos_only | ios_only)
     if platform_name == "darwin":
