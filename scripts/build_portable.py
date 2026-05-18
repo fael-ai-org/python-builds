@@ -805,7 +805,7 @@ def bundle_manylinux_sqlite_runtime_libs(python_dir: Path, sqlite_prefix: Path) 
 
 def strip_binaries(python_dir: Path, target_os: str) -> None:
     python_bin = python_dir / "bin" / "python3"
-    if python_bin.exists():
+    if python_bin.exists() and not python_bin.is_symlink():
         run(["strip", str(python_bin)])
     for so in sorted(python_dir.rglob("*.so")):
         if so.is_file() and not so.is_symlink():
