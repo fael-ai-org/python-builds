@@ -151,7 +151,7 @@ def expected_missing_for_platform(name: str, platform_name: str) -> bool:
     optional_extension_modules |= {"_zstd", "compression.zstd"}
 
     if platform_name.startswith("win"):
-        return name in (non_windows_posix | linux_like_only | macos_only | ios_only)
+        return name in (non_windows_posix | linux_like_only | macos_only | ios_only | optional_extension_modules)
     if platform_name == "darwin":
         return name in (windows_only | linux_like_only | ios_only | optional_extension_modules)
     # linux and other posix-like targets
