@@ -155,7 +155,7 @@ def expected_missing_for_platform(name: str, platform_name: str) -> bool:
     if platform_name == "darwin":
         return name in (windows_only | linux_like_only | ios_only | optional_extension_modules)
     # linux and other posix-like targets
-    return name in (windows_only | macos_only | ios_only | optional_extension_modules)
+    return name in (windows_only | macos_only | ios_only | optional_extension_modules | linux_like_only)
 
 
 def import_module_subprocess(python_exe: str, name: str, timeout_s: int) -> str | None:
