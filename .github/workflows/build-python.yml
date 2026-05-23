@@ -329,6 +329,21 @@ jobs:
           name: ${{ matrix.artifact_name }}
           path: dist-archive
 
+      - name: Diagnose packaged Python startup (Linux)
+        if: matrix.target_os == 'linux'
+        continue-on-error: true
+        shell: bash
+        run: |
+          TMPDIR_D=$(mktemp -d)
+          tar xzf "dist-archive/${{ matrix.archive_name }}" -C "$TMPDIR_D"
+          PYTHON_BIN="$TMPDIR_D/python/bin/python3"
+          echo "=== ldd python3 ===" | tee -a "$GITHUB_STEP_SUMMARY"
+          ldd "$PYTHON_BIN" 2>&1 | tee -a "$GITHUB_STEP_SUMMARY" || true
+          echo "=== python3 startup test ===" | tee -a "$GITHUB_STEP_SUMMARY"
+          "$PYTHON_BIN" -c "import sys; print(sys.version)" 2>&1 \
+            | tee -a "$GITHUB_STEP_SUMMARY" || true
+          rm -rf "$TMPDIR_D"
+
       - name: Validate packaged distribution
         shell: bash
         run: |

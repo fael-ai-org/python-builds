@@ -55,9 +55,17 @@ def run_check(checker: Path, python_exe: Path, mode: str, timeout_seconds: int) 
     try:
         payload = json.loads(proc.stdout)
     except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            f"Failed to parse {mode} validation output: {exc}\nstdout={proc.stdout}\nstderr={proc.stderr}"
-        ) from exc
+        # Packaged Python failed to produce valid JSON (e.g. crashed at startup
+        # due to a missing shared library).  Return a structured payload so the
+        # summary is still printed and the details are visible in the CI log.
+        payload = {
+            "mode": mode,
+            "error": f"Failed to parse output: {exc}",
+            "returncode": proc.returncode,
+            "stdout": proc.stdout[:2000],
+            "stderr": proc.stderr[:2000],
+        }
+        return 1, payload
     return proc.returncode, payload
 
 

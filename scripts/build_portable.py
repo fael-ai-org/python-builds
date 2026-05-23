@@ -689,6 +689,13 @@ def rewrite_linux_rpaths(python_dir: Path) -> None:
             else:
                 rpath = f"$ORIGIN/{relative_lib_dir.replace(os.sep, '/')}"
             run(["patchelf", "--set-rpath", rpath, str(so)])
+    # Patch versioned shared libraries directly in lib/ (e.g. libssl.so.3,
+    # libcrypto.so.3, libpython3.x.so.1.0) so they can locate their sibling
+    # bundled dependencies via $ORIGIN instead of the manylinux build paths.
+    lib_dir = python_dir / "lib"
+    for versioned_so in sorted(lib_dir.glob("*.so.*")):
+        if versioned_so.is_file() and not versioned_so.is_symlink():
+            run(["patchelf", "--set-rpath", "$ORIGIN", str(versioned_so)])
 
 
 def linux_runtime_dependencies(binary: Path) -> list[Path]:
