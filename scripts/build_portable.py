@@ -721,27 +721,25 @@ def linux_runtime_dependencies(binary: Path) -> list[Path]:
 
 
 def should_bundle_linux_dependency(path: Path) -> bool:
-    excluded_prefixes = (
-        "/lib64/ld-linux",
-        "/lib64/libc.so",
-        "/lib64/libdl.so",
-        "/lib64/libm.so",
-        "/lib64/libpthread.so",
-        "/lib64/librt.so",
-        "/lib64/libutil.so",
-        "/lib64/libresolv.so",
-        "/lib64/libnsl.so",
-        "/usr/lib64/libc.so",
-        "/usr/lib64/libdl.so",
-        "/usr/lib64/libm.so",
-        "/usr/lib64/libpthread.so",
-        "/usr/lib64/librt.so",
-        "/usr/lib64/libutil.so",
-        "/usr/lib64/libresolv.so",
-        "/usr/lib64/libnsl.so",
+    # These glibc/system libraries must never be bundled regardless of where
+    # they live on the build machine (e.g. /lib64/ on manylinux/RHEL,
+    # /lib/x86_64-linux-gnu/ on Debian/Ubuntu).  Bundling them while leaving
+    # the host ld-linux in place causes GLIBC_PRIVATE symbol-lookup failures
+    # at runtime because private symbols in libpthread/libc are only present
+    # when the exact matching ld-linux interpreter is used.
+    excluded_name_prefixes = (
+        "ld-linux",       # ld-linux-x86-64.so.2, ld-linux-aarch64.so.1, …
+        "libc.so",
+        "libdl.so",
+        "libm.so",
+        "libpthread.so",
+        "librt.so",
+        "libutil.so",
+        "libresolv.so",
+        "libnsl.so",
     )
-    path_str = str(path)
-    return not any(path_str.startswith(prefix) for prefix in excluded_prefixes)
+    name = path.name
+    return not any(name.startswith(prefix) for prefix in excluded_name_prefixes)
 
 
 def bundle_linux_runtime_dependencies(python_dir: Path) -> None:
