@@ -765,7 +765,11 @@ def bundle_linux_runtime_dependencies(python_dir: Path) -> None:
 
         for dependency in linux_runtime_dependencies(binary):
             resolved_dependency = dependency.resolve()
-            if not should_bundle_linux_dependency(resolved_dependency):
+            # Check against the ldd-reported soname (e.g. libpthread.so.0), not
+            # the resolved real file (e.g. libpthread-2.17.so on CentOS 7).  On
+            # manylinux2014 the glibc stubs are versioned symlinks, so resolving
+            # them produces a name that no longer matches the exclusion prefixes.
+            if not should_bundle_linux_dependency(dependency):
                 continue
             if python_dir in resolved_dependency.parents:
                 continue
