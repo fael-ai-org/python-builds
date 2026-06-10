@@ -261,8 +261,6 @@ jobs:
 
       - name: Configure artifact signing
         env:
-          CI_WINDOWS_SIGNING_REQUIRED: ${{ matrix.target_os == 'windows' }}
-          CI_MACOS_SIGNING_REQUIRED: ${{ matrix.target_os == 'macos' }}
           SIGNING_DESCRIPTION: python-builds
           SIGNING_TIMESTAMP_URL: ${{ vars.SIGNING_TIMESTAMP_URL }}
           WINDOWS_SIGNING_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
