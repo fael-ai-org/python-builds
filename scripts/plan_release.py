@@ -97,7 +97,7 @@ def main() -> None:
 
     build_details = changed_details
     build_versions = changed_versions
-    if args.force and not build_details:
+    if args.force:
         build_details = current_details
         build_versions = current_versions
 

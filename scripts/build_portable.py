@@ -19,6 +19,7 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from artifact_signing import sign_directory_binaries, sign_paths
 from resolve_latest_patch import details_for_version, fetch_tag_refs, latest_detail_for_major
 
 
@@ -56,6 +57,20 @@ def allocate_work_dir(root: Path, base_name: str) -> Path:
             f"using {fallback} instead."
         )
         return fallback
+
+
+def maybe_sign_binaries(python_dir: Path, target_os: str) -> None:
+    if target_os == "windows":
+        sign_directory_binaries(python_dir, label="portable Python for Windows")
+        return
+
+    if target_os != "macos":
+        return
+
+    sign_directory_binaries(python_dir, label="portable Python shared libraries")
+    python_bin = python_dir / "bin" / "python3"
+    if python_bin.exists() and python_bin.is_file() and not python_bin.is_symlink():
+        sign_paths([python_bin], label="portable Python executable")
 
 
 def ensure_windows_admin() -> None:
@@ -251,6 +266,8 @@ def build_windows(version: str, target_arch: str, stage_dir: Path) -> None:
     license_txt = build_out_dir / "LICENSE.txt"
     if license_txt.is_file():
         shutil.copy2(license_txt, python_dir / "LICENSE.txt")
+
+    maybe_sign_binaries(python_dir, "windows")
 
 
 def prepend_env_paths(env: dict[str, str], key: str, paths: list[Path]) -> None:
@@ -825,12 +842,6 @@ def strip_binaries(python_dir: Path, target_os: str) -> None:
                 run(["strip", "-S", str(dylib)])
 
 
-def codesign_macos(python_dir: Path) -> None:
-    python_bin = python_dir / "bin" / "python3"
-    if python_bin.exists():
-        run(["codesign", "--sign", "-", "--force", "--deep", str(python_bin)])
-
-
 def linux_dynload_module_exists(python_dir: Path, module_name: str) -> bool:
     return any((python_dir / "lib").glob(f"python*/lib-dynload/{module_name}*.so"))
 
@@ -956,8 +967,7 @@ def build_unix(version: str, stage_dir: Path, target_os: str, target_arch: str =
     if target_os == "macos":
         bundle_macos_runtime_dependencies(python_dir)
     strip_binaries(python_dir, target_os)
-    if target_os == "macos":
-        codesign_macos(python_dir)
+    maybe_sign_binaries(python_dir, target_os)
 
 
 def write_metadata(
