@@ -13,8 +13,10 @@ from typing import Iterable
 TAG_PATTERN = re.compile(r"^v(?P<major>\d+\.\d+)\.(?P<patch>\d+)$")
 
 
-def fetch_tag_refs() -> list[dict[str, str]]:
+def fetch_tag_refs(majors: Iterable[str] | None = None) -> list[dict[str, str]]:
     tags: list[dict[str, str]] = []
+    wanted_majors = set(majors or [])
+    found_majors: set[str] = set()
     page = 1
     while True:
         url = f"https://api.github.com/repos/python/cpython/tags?per_page=100&page={page}"
@@ -34,18 +36,23 @@ def fetch_tag_refs() -> list[dict[str, str]]:
             name = item.get("name", "")
             if not name:
                 continue
+            match = TAG_PATTERN.match(name)
             tags.append(
                 {
                     "name": name,
                     "tag_commit_sha": item.get("commit", {}).get("sha", ""),
                 }
             )
+            if match and match.group("major") in wanted_majors:
+                found_majors.add(match.group("major"))
+        if wanted_majors and wanted_majors.issubset(found_majors):
+            break
         page += 1
     return tags
 
 
-def fetch_tags() -> list[str]:
-    return [tag["name"] for tag in fetch_tag_refs()]
+def fetch_tags(majors: Iterable[str] | None = None) -> list[str]:
+    return [tag["name"] for tag in fetch_tag_refs(majors)]
 
 
 def latest_for_major(tags: Iterable[str], major: str) -> str:
@@ -131,10 +138,10 @@ def main() -> None:
         raise RuntimeError("No majors provided. Use --major and/or --majors-file.")
 
     if args.details:
-        tag_refs = fetch_tag_refs()
+        tag_refs = fetch_tag_refs(majors)
         result = {major: latest_detail_for_major(tag_refs, major) for major in majors}
     else:
-        tags = fetch_tags()
+        tags = fetch_tags(majors)
         result = {major: latest_for_major(tags, major) for major in majors}
     print(json.dumps(result, indent=2))
 
