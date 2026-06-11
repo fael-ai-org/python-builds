@@ -841,8 +841,9 @@ def build_unix(version: str, stage_dir: Path, target_os: str, target_arch: str =
         "./configure",
         f"--prefix={python_dir}",
         "--with-ensurepip=install",
-        "--enable-optimizations",
     ]
+    if not skip_unix_optimizations(version, target_os):
+        configure_args.append("--enable-optimizations")
     if target_os == "linux":
         openssl_prefix = build_manylinux_openssl(stage_dir)
         print(f"Using built OpenSSL {MANYLINUX_OPENSSL_VERSION} from {openssl_prefix}")
@@ -868,6 +869,10 @@ def build_unix(version: str, stage_dir: Path, target_os: str, target_arch: str =
     if target_os == "macos":
         bundle_macos_runtime_dependencies(python_dir)
     strip_binaries(python_dir, target_os)
+
+
+def skip_unix_optimizations(version: str, target_os: str) -> bool:
+    return target_os == "linux" and version.startswith("3.13.")
 
 
 def write_metadata(
@@ -930,8 +935,12 @@ def package(stage_dir: Path, output_dir: Path, base_name: str, target_os: str) -
 
 def smoke_test(stage_dir: Path, target_os: str) -> None:
     python_dir = stage_dir / "python"
+    smoke_modules = ("ctypes", "ensurepip", "ssl", "sqlite3", "venv", "zoneinfo")
     if target_os == "windows":
         python_exe = python_dir / "python.exe"
+        run([str(python_exe), "-c", "import sys; print(sys.version)"])
+        for module_name in smoke_modules:
+            run([str(python_exe), "-c", f"import {module_name}"])
         run(
             [
                 str(python_exe),
@@ -942,6 +951,9 @@ def smoke_test(stage_dir: Path, target_os: str) -> None:
         return
 
     python_exe = python_dir / "bin" / "python3"
+    run([str(python_exe), "-c", "import sys; print(sys.version)"])
+    for module_name in smoke_modules:
+        run([str(python_exe), "-c", f"import {module_name}"])
     run(
         [
             str(python_exe),
