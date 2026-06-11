@@ -329,6 +329,7 @@ def build_manylinux_openssl(stage_dir: Path) -> Path:
     if not source_dir.exists():
         with tarfile.open(archive_path, "r:gz") as tf:
             tf.extractall(stage_dir)
+    ensure_openssl_perl_helpers(source_dir)
 
     run(
         [
@@ -344,6 +345,81 @@ def build_manylinux_openssl(stage_dir: Path) -> Path:
     run(["make", f"-j{cpu_count}"], cwd=source_dir)
     run(["make", "install_sw"], cwd=source_dir)
     return install_prefix
+
+
+def ensure_openssl_perl_helpers(source_dir: Path) -> None:
+    ipc_cmd_module = source_dir / "util" / "perl" / "IPC" / "Cmd.pm"
+    ipc_cmd_module.parent.mkdir(parents=True, exist_ok=True)
+    ipc_cmd_module.write_text(
+        "package IPC::Cmd;\n"
+        "use strict;\n"
+        "use warnings;\n"
+        "use File::Spec;\n"
+        "\n"
+        "sub import { }\n"
+        "\n"
+        "sub can_run {\n"
+        "    my ($command) = @_;\n"
+        "    return undef unless defined $command && length $command;\n"
+        "\n"
+        "    my ($volume, $directories, $file) = File::Spec->splitpath($command);\n"
+        "    if (defined $directories && length $directories) {\n"
+        "        return (-f $command && -x $command) ? $command : undef;\n"
+        "    }\n"
+        "\n"
+        "    foreach my $dir (File::Spec->path()) {\n"
+        "        next unless defined $dir && length $dir;\n"
+        "        my $fullpath = File::Spec->catfile($dir, $command);\n"
+        "        return $fullpath if -f $fullpath && -x $fullpath;\n"
+        "    }\n"
+        "\n"
+        "    return undef;\n"
+        "}\n"
+        "\n"
+        "1;\n",
+        encoding="utf-8",
+    )
+
+    time_piece_module = source_dir / "util" / "perl" / "Time" / "Piece.pm"
+    time_piece_module.parent.mkdir(parents=True, exist_ok=True)
+    time_piece_module.write_text(
+        "package Time::Piece;\n"
+        "use strict;\n"
+        "use warnings;\n"
+        "use POSIX ();\n"
+        "\n"
+        "sub import {\n"
+        "    my $caller = caller;\n"
+        "    no strict 'refs';\n"
+        "    *{\"${caller}::localtime\"} = \\&localtime;\n"
+        "}\n"
+        "\n"
+        "sub localtime {\n"
+        "    return bless { epoch => time() }, __PACKAGE__;\n"
+        "}\n"
+        "\n"
+        "sub strptime {\n"
+        "    my ($class, $value, $format) = @_;\n"
+        "    my %months = (\n"
+        "        Jan => 0, Feb => 1, Mar => 2, Apr => 3, May => 4, Jun => 5,\n"
+        "        Jul => 6, Aug => 7, Sep => 8, Oct => 9, Nov => 10, Dec => 11,\n"
+        "    );\n"
+        "    die \"Unsupported strptime format: $format\" unless $format eq '%d %b %Y';\n"
+        "    my ($day, $month, $year) = $value =~ /^(\\d{1,2})\\s+([A-Za-z]{3})\\s+(\\d{4})$/\n"
+        "        or die \"Unsupported strptime input: $value\";\n"
+        "    die \"Unsupported month: $month\" unless exists $months{$month};\n"
+        "    my $epoch = POSIX::mktime(0, 0, 0, $day, $months{$month}, $year - 1900);\n"
+        "    return bless { epoch => $epoch }, $class;\n"
+        "}\n"
+        "\n"
+        "sub strftime {\n"
+        "    my ($self, $format) = @_;\n"
+        "    return POSIX::strftime($format, CORE::localtime($self->{epoch}));\n"
+        "}\n"
+        "\n"
+        "1;\n",
+        encoding="utf-8",
+    )
 
 
 def unix_build_env(target_os: str, python_version: str, target_arch: str = "x86_64") -> dict[str, str]:
