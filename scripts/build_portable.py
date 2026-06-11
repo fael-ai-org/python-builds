@@ -8,7 +8,6 @@ import json
 import os
 import stat
 import platform
-import re
 import shutil
 import subprocess
 import sys
@@ -20,6 +19,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from resolve_latest_patch import details_for_version, fetch_tag_refs, latest_detail_for_major
+
+
+MANYLINUX_OPENSSL_VERSION = "3.0.21"
 
 
 def run(
@@ -314,187 +316,34 @@ def manylinux_internal_prefix(name: str) -> Path | None:
     return matches[-1]
 
 
-def detect_manylinux_openssl_version(openssl_prefix: Path) -> str | None:
-    openssl_bin = openssl_prefix / "bin" / "openssl"
-    if openssl_bin.exists():
-        try:
-            result = subprocess.run(
-                [str(openssl_bin), "version"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-        except subprocess.CalledProcessError:
-            result = None
-        else:
-            match = re.search(r"OpenSSL\s+(\d+\.\d+\.\d+[a-z]?)", result.stdout)
-            if match:
-                return match.group(1)
+def build_manylinux_openssl(stage_dir: Path) -> Path:
+    install_prefix = stage_dir / f"openssl-{MANYLINUX_OPENSSL_VERSION}-install"
+    if (install_prefix / "lib" / "libssl.so").exists():
+        return install_prefix
 
-    for pattern in ("lib/libcrypto.so*", "lib64/libcrypto.so*"):
-        for candidate in sorted(openssl_prefix.glob(pattern)):
-            try:
-                result = subprocess.run(
-                    ["strings", str(candidate)],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-            except (FileNotFoundError, subprocess.CalledProcessError):
-                continue
-
-            match = re.search(r"OpenSSL\s+(\d+\.\d+\.\d+[a-z]?)", result.stdout)
-            if match:
-                return match.group(1)
-
-    return None
-
-
-def manylinux_openssl_configure_prefix(stage_dir: Path, openssl_prefix: Path) -> Path:
-    include_dir = openssl_prefix / "include"
-    lib_dir = openssl_prefix / "lib"
-    if include_dir.exists() and lib_dir.exists():
-        return openssl_prefix
-
-    if include_dir.exists():
-        fallback_lib_dir = openssl_prefix / "lib64"
-        if fallback_lib_dir.exists():
-            shim_root = stage_dir / ".manylinux-openssl"
-            if shim_root.exists() or shim_root.is_symlink():
-                if shim_root.is_symlink() or shim_root.is_file():
-                    shim_root.unlink()
-                else:
-                    shutil.rmtree(shim_root)
-            shim_root.mkdir(parents=True, exist_ok=True)
-            (shim_root / "include").symlink_to(include_dir, target_is_directory=True)
-            (shim_root / "lib").symlink_to(fallback_lib_dir, target_is_directory=True)
-            print(f"Using OpenSSL configure shim at {shim_root} -> {openssl_prefix}")
-            return shim_root
-
-    full_version = detect_manylinux_openssl_version(openssl_prefix)
-    if full_version is None:
-        raise RuntimeError(
-            f"Could not determine OpenSSL version for manylinux prefix {openssl_prefix}"
-        )
-
-    archive_name = f"openssl-{full_version}.tar.gz"
+    archive_name = f"openssl-{MANYLINUX_OPENSSL_VERSION}.tar.gz"
     archive_path = stage_dir / archive_name
-    source_dir = stage_dir / f"openssl-{full_version}"
+    source_dir = stage_dir / f"openssl-{MANYLINUX_OPENSSL_VERSION}"
     if not archive_path.exists():
         download(f"https://www.openssl.org/source/{archive_name}", archive_path)
     if not source_dir.exists():
         with tarfile.open(archive_path, "r:gz") as tf:
             tf.extractall(stage_dir)
 
-    generated_ssl_header = source_dir / "include" / "openssl" / "ssl.h"
-    if not generated_ssl_header.exists():
-        ipc_cmd_module = source_dir / "util" / "perl" / "IPC" / "Cmd.pm"
-        ipc_cmd_module.parent.mkdir(parents=True, exist_ok=True)
-        ipc_cmd_module.write_text(
-            "package IPC::Cmd;\n"
-            "use strict;\n"
-            "use warnings;\n"
-            "use File::Spec;\n"
-            "\n"
-            "sub import { }\n"
-            "\n"
-            "sub can_run {\n"
-            "    my ($command) = @_;\n"
-            "    return undef unless defined $command && length $command;\n"
-            "\n"
-            "    my ($volume, $directories, $file) = File::Spec->splitpath($command);\n"
-            "    if (defined $directories && length $directories) {\n"
-            "        return (-f $command && -x $command) ? $command : undef;\n"
-            "    }\n"
-            "\n"
-            "    foreach my $dir (File::Spec->path()) {\n"
-            "        next unless defined $dir && length $dir;\n"
-            "        my $fullpath = File::Spec->catfile($dir, $command);\n"
-            "        return $fullpath if -f $fullpath && -x $fullpath;\n"
-            "    }\n"
-            "\n"
-            "    return undef;\n"
-            "}\n"
-            "\n"
-            "1;\n",
-            encoding="utf-8",
-        )
-        time_piece_module = source_dir / "util" / "perl" / "Time" / "Piece.pm"
-        time_piece_module.parent.mkdir(parents=True, exist_ok=True)
-        time_piece_module.write_text(
-            "package Time::Piece;\n"
-            "use strict;\n"
-            "use warnings;\n"
-            "use POSIX ();\n"
-            "\n"
-            "sub import {\n"
-            "    my $caller = caller;\n"
-            "    no strict 'refs';\n"
-            "    *{\"${caller}::localtime\"} = \\&localtime;\n"
-            "}\n"
-            "\n"
-            "sub localtime {\n"
-            "    return bless { epoch => time() }, __PACKAGE__;\n"
-            "}\n"
-            "\n"
-            "sub strptime {\n"
-            "    my ($class, $value, $format) = @_;\n"
-            "    my %months = (\n"
-            "        Jan => 0, Feb => 1, Mar => 2, Apr => 3, May => 4, Jun => 5,\n"
-            "        Jul => 6, Aug => 7, Sep => 8, Oct => 9, Nov => 10, Dec => 11,\n"
-            "    );\n"
-            "    die \"Unsupported strptime format: $format\" unless $format eq '%d %b %Y';\n"
-            "    my ($day, $month, $year) = $value =~ /^(\\d{1,2})\\s+([A-Za-z]{3})\\s+(\\d{4})$/\n"
-            "        or die \"Unsupported strptime input: $value\";\n"
-            "    die \"Unsupported month: $month\" unless exists $months{$month};\n"
-            "    my $epoch = POSIX::mktime(0, 0, 0, $day, $months{$month}, $year - 1900);\n"
-            "    return bless { epoch => $epoch }, $class;\n"
-            "}\n"
-            "\n"
-            "sub strftime {\n"
-            "    my ($self, $format) = @_;\n"
-            "    return POSIX::strftime($format, CORE::localtime($self->{epoch}));\n"
-            "}\n"
-            "\n"
-            "1;\n",
-            encoding="utf-8",
-        )
-        generated_prefix = stage_dir / ".manylinux-openssl-generated"
-        run(
-            [
-                "./Configure",
-                f"--prefix={generated_prefix}",
-                f"--openssldir={generated_prefix}",
-                "--libdir=lib",
-            ],
-            cwd=source_dir,
-        )
-        run(["make", "build_generated"], cwd=source_dir)
-
-    if not generated_ssl_header.exists():
-        raise RuntimeError(f"Downloaded OpenSSL source is missing headers: {source_dir}")
-
-    runtime_lib_dir = openssl_prefix / "lib"
-    if not runtime_lib_dir.exists():
-        runtime_lib_dir = openssl_prefix / "lib64"
-    if not runtime_lib_dir.exists():
-        raise RuntimeError(f"Manylinux OpenSSL libraries not found under {openssl_prefix}")
-
-    shim_root = stage_dir / ".manylinux-openssl"
-    if shim_root.exists() or shim_root.is_symlink():
-        if shim_root.is_symlink() or shim_root.is_file():
-            shim_root.unlink()
-        else:
-            shutil.rmtree(shim_root)
-
-    shim_root.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(source_dir / "include", shim_root / "include")
-    (shim_root / "lib").symlink_to(runtime_lib_dir, target_is_directory=True)
-    print(
-        f"Using OpenSSL configure shim at {shim_root} with headers from {archive_name} "
-        f"and libraries from {runtime_lib_dir}"
+    run(
+        [
+            "./Configure",
+            f"--prefix={install_prefix}",
+            f"--openssldir={install_prefix}",
+            "--libdir=lib",
+            "shared",
+        ],
+        cwd=source_dir,
     )
-    return shim_root
+    cpu_count = os.cpu_count() or 2
+    run(["make", f"-j{cpu_count}"], cwd=source_dir)
+    run(["make", "install_sw"], cwd=source_dir)
+    return install_prefix
 
 
 def unix_build_env(target_os: str, python_version: str, target_arch: str = "x86_64") -> dict[str, str]:
@@ -502,9 +351,6 @@ def unix_build_env(target_os: str, python_version: str, target_arch: str = "x86_
     if target_os == "linux":
         env.setdefault("CC", "gcc")
         env.setdefault("CXX", "g++")
-        openssl_prefix = manylinux_internal_prefix("openssl")
-        if openssl_prefix is not None:
-            print(f"Using manylinux internal OpenSSL from {openssl_prefix}")
         sqlite_prefix = manylinux_internal_prefix("sqlite3")
         if sqlite_prefix is not None:
             include_dir = sqlite_prefix / "include"
@@ -922,11 +768,10 @@ def build_unix(version: str, stage_dir: Path, target_os: str, target_arch: str =
         "--enable-optimizations",
     ]
     if target_os == "linux":
-        openssl_prefix = manylinux_internal_prefix("openssl")
-        if openssl_prefix is not None:
-            configure_prefix = manylinux_openssl_configure_prefix(stage_dir, openssl_prefix)
-            configure_args.append(f"--with-openssl={configure_prefix}")
-            configure_args.append("--with-openssl-rpath=auto")
+        openssl_prefix = build_manylinux_openssl(stage_dir)
+        print(f"Using built OpenSSL {MANYLINUX_OPENSSL_VERSION} from {openssl_prefix}")
+        configure_args.append(f"--with-openssl={openssl_prefix}")
+        configure_args.append("--with-openssl-rpath=auto")
 
     run(
         configure_args,
@@ -938,9 +783,7 @@ def build_unix(version: str, stage_dir: Path, target_os: str, target_arch: str =
     run(["make", "install"], cwd=src_dir, env=env)
     if target_os == "linux":
         ensure_linux_ssl_module(src_dir, python_dir)
-        openssl_prefix = manylinux_internal_prefix("openssl")
-        if openssl_prefix is not None:
-            bundle_manylinux_openssl_runtime_libs(python_dir, openssl_prefix)
+        bundle_manylinux_openssl_runtime_libs(python_dir, openssl_prefix)
         sqlite_prefix = manylinux_internal_prefix("sqlite3")
         if sqlite_prefix is not None:
             bundle_manylinux_sqlite_runtime_libs(python_dir, sqlite_prefix)
