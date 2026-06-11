@@ -70,6 +70,43 @@ jobs:
           python scripts/resolve_latest_patch.py --majors-file config/majors.json --details > resolved-details.json
           cat resolved-details.json
 
+      - id: release-exists
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          RELEASE_TAG="python-$(jq -r '[to_entries[] | .value.version] | join("-")' resolved-details.json)"
+          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/${RELEASE_TAG}" > /dev/null 2>&1; then
+            TAG_EXISTS="true"
+          else
+            TAG_EXISTS="false"
+          fi
+
+          RELEASE_STATUS="$(curl -sS -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/releases/tags/${RELEASE_TAG}")"
+          if [ "${RELEASE_STATUS}" = "200" ]; then
+            RELEASE_EXISTS="true"
+          else
+            RELEASE_EXISTS="false"
+          fi
+
+          RELEASE_AVAILABLE="false"
+          if [ "${TAG_EXISTS}" = "true" ] && [ "${RELEASE_EXISTS}" = "true" ]; then
+            RELEASE_AVAILABLE="true"
+          fi
+
+          echo "tag_exists=${TAG_EXISTS}" >> "$GITHUB_OUTPUT"
+          echo "release_exists=${RELEASE_EXISTS}" >> "$GITHUB_OUTPUT"
+          echo "release_available=${RELEASE_AVAILABLE}" >> "$GITHUB_OUTPUT"
+          echo "Expected release tag: ${RELEASE_TAG}"
+          echo "Tag exists: ${TAG_EXISTS}"
+          echo "Release exists: ${RELEASE_EXISTS}"
+
       - id: plan
         env:
           FORCE_REBUILD: ${{ github.event.inputs.force_rebuild || 'false' }}
@@ -77,20 +114,27 @@ jobs:
           MAJOR_FILTER_INPUT: ${{ github.event.inputs.major_filter || '' }}
           TARGET_OS_FILTER_INPUT: ${{ github.event.inputs.target_os_filter || 'any' }}
           TARGET_ARCH_FILTER_INPUT: ${{ github.event.inputs.target_arch_filter || 'any' }}
+          RELEASE_AVAILABLE: ${{ steps.release-exists.outputs.release_available }}
+          EXPECTED_RELEASE_TAG: ${{ steps.release-exists.outputs.release_tag }}
         run: |
           set -euo pipefail
 
           PLAN_ARGS=()
           FORCE_REBUILD_EFFECTIVE="${FORCE_REBUILD}"
-          if [ -n "${MAJOR_FILTER_INPUT}" ] || [ "${TARGET_OS_FILTER_INPUT}" != "any" ] || [ "${TARGET_ARCH_FILTER_INPUT}" != "any" ]; then
+          RELEASE_TAG_EFFECTIVE="${RELEASE_TAG_INPUT}"
+          if [ -z "${RELEASE_TAG_EFFECTIVE}" ]; then
+            RELEASE_TAG_EFFECTIVE="${EXPECTED_RELEASE_TAG}"
+          fi
+
+          if [ "${RELEASE_AVAILABLE}" != "true" ] || [ -n "${MAJOR_FILTER_INPUT}" ] || [ "${TARGET_OS_FILTER_INPUT}" != "any" ] || [ "${TARGET_ARCH_FILTER_INPUT}" != "any" ]; then
             FORCE_REBUILD_EFFECTIVE="true"
           fi
 
           if [ "${FORCE_REBUILD_EFFECTIVE}" = "true" ]; then
             PLAN_ARGS+=(--force)
           fi
-          if [ -n "${RELEASE_TAG_INPUT}" ]; then
-            PLAN_ARGS+=(--release-tag "${RELEASE_TAG_INPUT}")
+          if [ -n "${RELEASE_TAG_EFFECTIVE}" ]; then
+            PLAN_ARGS+=(--release-tag "${RELEASE_TAG_EFFECTIVE}")
           fi
 
           python scripts/plan_release.py \

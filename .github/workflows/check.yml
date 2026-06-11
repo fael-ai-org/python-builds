@@ -43,10 +43,11 @@ jobs:
             --details > resolved-details.json
           cat resolved-details.json
 
-      - name: Check if release tag already exists
+      - name: Check if release already exists
         id: check
         env:
           FORCE_BUILD: ${{ github.event.inputs.force_build || 'false' }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -63,7 +64,19 @@ jobs:
             TAG_EXISTS="false"
           fi
 
-          if [ "${TAG_EXISTS}" = "false" ] || [ "${FORCE_BUILD}" = "true" ]; then
+          RELEASE_STATUS="$(curl -sS -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/releases/tags/${RELEASE_TAG}")"
+          if [ "${RELEASE_STATUS}" = "200" ]; then
+            echo "Release ${RELEASE_TAG} already exists."
+            RELEASE_EXISTS="true"
+          else
+            echo "Release ${RELEASE_TAG} not found; build needed."
+            RELEASE_EXISTS="false"
+          fi
+
+          if [ "${TAG_EXISTS}" = "false" ] || [ "${RELEASE_EXISTS}" = "false" ] || [ "${FORCE_BUILD}" = "true" ]; then
             echo "should_build=true" >> "$GITHUB_OUTPUT"
           else
             echo "should_build=false" >> "$GITHUB_OUTPUT"
