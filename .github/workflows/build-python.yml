@@ -63,25 +63,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Configure artifact signing
-        env:
-          CI_WINDOWS_SIGNING_REQUIRED: ${{ github.event_name != 'pull_request' }}
-          SIGNING_DESCRIPTION: python-builds
-          SIGNING_TIMESTAMP_URL: ${{ vars.SIGNING_TIMESTAMP_URL }}
-          WINDOWS_SIGNING_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
-          WINDOWS_SIGNING_PFX_FILE: ${{ secrets.WINDOWS_SIGNING_PFX_FILE }}
-          WINDOWS_SIGNING_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PFX_PASSWORD }}
-          WINDOWS_SIGNING_CERT_SHA1: ${{ secrets.WINDOWS_SIGNING_CERT_SHA1 }}
-          WINDOWS_SIGNING_CERT_SUBJECT: ${{ secrets.WINDOWS_SIGNING_CERT_SUBJECT }}
-          MACOS_SIGNING_P12_BASE64: ${{ secrets.MACOS_SIGNING_P12_BASE64 }}
-          MACOS_SIGNING_P12_FILE: ${{ secrets.MACOS_SIGNING_P12_FILE }}
-          MACOS_SIGNING_P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
-          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
-          MACOS_SIGNING_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_SIGNING_KEYCHAIN_PASSWORD }}
-          GENERIC_SIGN_COMMAND: ${{ secrets.GENERIC_SIGN_COMMAND }}
-        run: |
-          python scripts/setup_ci_signing.py
-
       - id: resolve
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -258,24 +239,6 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-
-      - name: Configure artifact signing
-        env:
-          SIGNING_DESCRIPTION: python-builds
-          SIGNING_TIMESTAMP_URL: ${{ vars.SIGNING_TIMESTAMP_URL }}
-          WINDOWS_SIGNING_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
-          WINDOWS_SIGNING_PFX_FILE: ${{ secrets.WINDOWS_SIGNING_PFX_FILE }}
-          WINDOWS_SIGNING_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PFX_PASSWORD }}
-          WINDOWS_SIGNING_CERT_SHA1: ${{ secrets.WINDOWS_SIGNING_CERT_SHA1 }}
-          WINDOWS_SIGNING_CERT_SUBJECT: ${{ secrets.WINDOWS_SIGNING_CERT_SUBJECT }}
-          MACOS_SIGNING_P12_BASE64: ${{ secrets.MACOS_SIGNING_P12_BASE64 }}
-          MACOS_SIGNING_P12_FILE: ${{ secrets.MACOS_SIGNING_P12_FILE }}
-          MACOS_SIGNING_P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
-          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
-          MACOS_SIGNING_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_SIGNING_KEYCHAIN_PASSWORD }}
-          GENERIC_SIGN_COMMAND: ${{ secrets.GENERIC_SIGN_COMMAND }}
-        run: |
-          python scripts/setup_ci_signing.py
 
       - name: Install build dependencies (macOS)
         if: matrix.target_os == 'macos'
