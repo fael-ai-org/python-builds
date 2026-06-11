@@ -50,7 +50,7 @@ def allocate_work_dir(root: Path, base_name: str) -> Path:
     try:
         remove_tree(preferred)
         return preferred
-    except PermissionError:
+    except OSError:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
         fallback = root / "build" / f"{base_name}-{timestamp}"
         print(
@@ -437,6 +437,9 @@ def unix_build_env(target_os: str, python_version: str, target_arch: str = "x86_
                 env["PKG_CONFIG_PATH"] = (
                     f"{lib_dir / 'pkgconfig'}{os.pathsep}{env.get('PKG_CONFIG_PATH', '')}"
                 ).rstrip(os.pathsep)
+                env["LD_LIBRARY_PATH"] = (
+                    f"{lib_dir}{os.pathsep}{env.get('LD_LIBRARY_PATH', '')}"
+                ).rstrip(os.pathsep)
                 print(f"Using manylinux internal SQLite from {sqlite_prefix}")
         return env
 
@@ -599,9 +602,6 @@ def bundle_macos_runtime_dependencies(python_dir: Path) -> None:
 
 
 def rewrite_linux_rpaths(python_dir: Path) -> None:
-    python_bin = python_dir / "bin" / "python3"
-    if python_bin.exists():
-        run(["patchelf", "--set-rpath", "$ORIGIN/../lib", str(python_bin)])
     for so in sorted(python_dir.rglob("*.so")):
         if so.is_file() and not so.is_symlink():
             relative_lib_dir = os.path.relpath(python_dir / "lib", so.parent)
@@ -609,6 +609,7 @@ def rewrite_linux_rpaths(python_dir: Path) -> None:
                 rpath = "$ORIGIN"
             else:
                 rpath = f"$ORIGIN/{relative_lib_dir.replace(os.sep, '/')}"
+            ensure_writable(so)
             run(["patchelf", "--set-rpath", rpath, str(so)])
     # Patch versioned shared libraries directly in lib/ (e.g. libssl.so.3,
     # libcrypto.so.3, libpython3.x.so.1.0) so they can locate their sibling
@@ -616,6 +617,7 @@ def rewrite_linux_rpaths(python_dir: Path) -> None:
     lib_dir = python_dir / "lib"
     for versioned_so in sorted(lib_dir.glob("*.so.*")):
         if versioned_so.is_file() and not versioned_so.is_symlink():
+            ensure_writable(versioned_so)
             run(["patchelf", "--set-rpath", "$ORIGIN", str(versioned_so)])
 
 
@@ -698,6 +700,7 @@ def bundle_linux_runtime_dependencies(python_dir: Path) -> None:
             destination = destination_dir / dependency.name
             if dependency.name not in copied_names:
                 shutil.copy2(resolved_dependency, destination)
+                ensure_writable(destination)
                 copied_names.add(dependency.name)
             pending.append(resolved_dependency)
 
@@ -717,6 +720,7 @@ def bundle_manylinux_openssl_runtime_libs(python_dir: Path, openssl_prefix: Path
             if source.is_dir():
                 continue
             shutil.copy2(source, destination_dir / source.name, follow_symlinks=True)
+            ensure_writable(destination_dir / source.name)
 
 
 def bundle_manylinux_sqlite_runtime_libs(python_dir: Path, sqlite_prefix: Path) -> None:
@@ -731,6 +735,7 @@ def bundle_manylinux_sqlite_runtime_libs(python_dir: Path, sqlite_prefix: Path) 
         if source.is_dir():
             continue
         shutil.copy2(source, destination_dir / source.name, follow_symlinks=True)
+        ensure_writable(destination_dir / source.name)
 
 
 def strip_binaries(python_dir: Path, target_os: str) -> None:
@@ -872,7 +877,7 @@ def build_unix(version: str, stage_dir: Path, target_os: str, target_arch: str =
 
 
 def skip_unix_optimizations(version: str, target_os: str) -> bool:
-    return target_os == "linux" and version.startswith("3.13.")
+    return target_os == "linux"
 
 
 def write_metadata(
