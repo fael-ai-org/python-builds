@@ -344,7 +344,20 @@ jobs:
               --output-dir dist
           fi
 
-      - name: Upload artifact
+      - id: upload-artifact
+        name: Upload artifact
+        uses: actions/upload-artifact@v7
+        continue-on-error: true
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            dist/${{ matrix.archive_name }}
+            dist/${{ matrix.archive_name }}.sha256
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Retry artifact upload
+        if: steps.upload-artifact.outcome == 'failure'
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_name }}
@@ -352,6 +365,7 @@ jobs:
             dist/${{ matrix.archive_name }}
             dist/${{ matrix.archive_name }}.sha256
           if-no-files-found: error
+          overwrite: true
 
   validate-artifacts:
     needs: [check-upstream, build]
