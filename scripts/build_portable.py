@@ -621,6 +621,36 @@ def rewrite_linux_rpaths(python_dir: Path) -> None:
             run(["patchelf", "--set-rpath", "$ORIGIN", str(versioned_so)])
 
 
+def install_linux_python_launcher(python_dir: Path) -> None:
+    bin_dir = python_dir / "bin"
+    python_link = bin_dir / "python3"
+    if not python_link.exists():
+        return
+
+    python_bin = python_link.resolve()
+    if not python_bin.is_file() or python_bin.suffix == ".bin":
+        return
+
+    real_bin = python_bin.with_name(f"{python_bin.name}.bin")
+    if real_bin.exists():
+        return
+
+    python_bin.rename(real_bin)
+    python_bin.write_text(
+        "#!/usr/bin/env sh\n"
+        "SCRIPT_DIR=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\n"
+        "PYTHON_ROOT=$(dirname -- \"$SCRIPT_DIR\")\n"
+        "if [ -n \"${LD_LIBRARY_PATH:-}\" ]; then\n"
+        "  export LD_LIBRARY_PATH=\"$PYTHON_ROOT/lib:$LD_LIBRARY_PATH\"\n"
+        "else\n"
+        "  export LD_LIBRARY_PATH=\"$PYTHON_ROOT/lib\"\n"
+        "fi\n"
+        f"exec \"$SCRIPT_DIR/{real_bin.name}\" \"$@\"\n",
+        encoding="utf-8",
+    )
+    python_bin.chmod(0o755)
+
+
 def linux_runtime_dependencies(binary: Path) -> list[Path]:
     result = subprocess.run(
         ["ldd", str(binary)],
@@ -871,6 +901,7 @@ def build_unix(version: str, stage_dir: Path, target_os: str, target_arch: str =
             bundle_manylinux_sqlite_runtime_libs(python_dir, sqlite_prefix)
         bundle_linux_runtime_dependencies(python_dir)
         rewrite_linux_rpaths(python_dir)
+        install_linux_python_launcher(python_dir)
     if target_os == "macos":
         bundle_macos_runtime_dependencies(python_dir)
     strip_binaries(python_dir, target_os)
