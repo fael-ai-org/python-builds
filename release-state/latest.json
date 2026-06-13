@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "release_tag": "python-3.10.20-3.11.15-3.12.13-3.13.14-3.14.6",
-  "release_reason": "version-bump",
-  "released_at_utc": "2026-06-11T20:27:21.821403+00:00",
+  "release_reason": "forced-rebuild",
+  "released_at_utc": "2026-06-13T20:46:43.860608+00:00",
   "versions": {
     "3.10": "3.10.20",
     "3.11": "3.11.15",
@@ -38,10 +38,28 @@
     }
   },
   "changed_versions": {
+    "3.10": "3.10.20",
+    "3.11": "3.11.15",
+    "3.12": "3.12.13",
     "3.13": "3.13.14",
     "3.14": "3.14.6"
   },
   "changed_details": {
+    "3.10": {
+      "version": "3.10.20",
+      "tag": "v3.10.20",
+      "tag_commit_sha": "842e987df856a5d4db37933c62a3456930a19092"
+    },
+    "3.11": {
+      "version": "3.11.15",
+      "tag": "v3.11.15",
+      "tag_commit_sha": "2340a037f7450e70fccfe411e6531afb4d57a312"
+    },
+    "3.12": {
+      "version": "3.12.13",
+      "tag": "v3.12.13",
+      "tag_commit_sha": "3bb231a6a5dc02b95658877318bf61501a7209e9"
+    },
     "3.13": {
       "version": "3.13.14",
       "tag": "v3.13.14",
@@ -54,13 +72,16 @@
     }
   },
   "changed_majors": [
+    "3.10",
+    "3.11",
+    "3.12",
     "3.13",
     "3.14"
   ],
-  "build_source_commit": "be09910e7c0700c903f58f6738eb0311a92b8a22",
+  "build_source_commit": "f17404e87ba40b58b86279b2bd8010cb78afec19",
   "workflow_run": {
-    "id": "27374500657",
-    "url": "https://github.com/FarisZahrani/python-builds/actions/runs/27374500657",
+    "id": "27478141716",
+    "url": "https://github.com/FarisZahrani/python-builds/actions/runs/27478141716",
     "repository": "FarisZahrani/python-builds",
     "event_name": "workflow_dispatch"
   }
