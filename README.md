@@ -75,6 +75,17 @@ Main release workflow:
 
 - `.github/workflows/build-python.yml`
 
+Automatic version checks:
+
+- `.github/workflows/check.yml` runs every Monday at 04:00 UTC and can also be
+  started manually.
+- The checker resolves the latest CPython patch for every configured major,
+  compares the combined release tag, and dispatches the build workflow when a
+  patch is missing.
+- Release-state and tag metadata include the immutable CPython commit SHA. A
+  GitHub API error or failed build dispatch stops the check instead of being
+  treated as “no update”.
+
 ### What the Workflow Does
 
 1. Resolves latest patch versions for configured majors.

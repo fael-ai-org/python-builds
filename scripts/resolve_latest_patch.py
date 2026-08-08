@@ -11,6 +11,7 @@ from typing import Iterable
 
 
 TAG_PATTERN = re.compile(r"^v(?P<major>\d+\.\d+)\.(?P<patch>\d+)$")
+SHA_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
 def fetch_tag_refs(majors: Iterable[str] | None = None) -> list[dict[str, str]]:
@@ -84,11 +85,14 @@ def latest_detail_for_major(tag_refs: Iterable[dict[str, str]], major: str) -> d
         patch = int(match.group("patch"))
         if best_patch is not None and patch <= best_patch:
             continue
+        commit_sha = tag.get("tag_commit_sha", "")
+        if not SHA_PATTERN.fullmatch(commit_sha):
+            raise RuntimeError(f"GitHub returned no immutable commit SHA for tag {tag_name!r}")
         best_patch = patch
         best_detail = {
             "version": f"{major}.{patch}",
             "tag": tag_name,
-            "tag_commit_sha": tag.get("tag_commit_sha", ""),
+            "tag_commit_sha": commit_sha,
         }
     if best_detail is None:
         raise RuntimeError(f"Could not resolve any patch version for major {major}")
@@ -100,10 +104,13 @@ def details_for_version(tag_refs: Iterable[dict[str, str]], version: str) -> dic
     for tag in tag_refs:
         if tag.get("name") != tag_name:
             continue
+        commit_sha = tag.get("tag_commit_sha", "")
+        if not SHA_PATTERN.fullmatch(commit_sha):
+            raise RuntimeError(f"GitHub returned no immutable commit SHA for tag {tag_name!r}")
         return {
             "version": version,
             "tag": tag_name,
-            "tag_commit_sha": tag.get("tag_commit_sha", ""),
+            "tag_commit_sha": commit_sha,
         }
     raise RuntimeError(f"Could not resolve Git tag metadata for Python {version}")
 

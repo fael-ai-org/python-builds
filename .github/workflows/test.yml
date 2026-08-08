@@ -37,6 +37,7 @@ jobs:
           assert payload, "resolved versions output is empty"
           for major, full in payload.items():
               assert full.startswith(f"{major}."), f"{full} does not match major {major}"
+              assert len(full.split(".")) == 3, f"unexpected version shape: {full}"
 
   script-smoke:
     runs-on: ${{ matrix.os }}
@@ -54,6 +55,9 @@ jobs:
 
       - name: Compile Python scripts
         run: python -m compileall scripts
+
+      - name: Run resolver unit tests
+        run: python -m unittest discover -s tests -v
 
       - name: Smoke test validation CLIs
         run: |

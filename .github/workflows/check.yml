@@ -71,9 +71,12 @@ jobs:
           if [ "${RELEASE_STATUS}" = "200" ]; then
             echo "Release ${RELEASE_TAG} already exists."
             RELEASE_EXISTS="true"
-          else
+          elif [ "${RELEASE_STATUS}" = "404" ]; then
             echo "Release ${RELEASE_TAG} not found; build needed."
             RELEASE_EXISTS="false"
+          else
+            echo "Could not determine release state; GitHub returned HTTP ${RELEASE_STATUS}." >&2
+            exit 1
           fi
 
           if [ "${TAG_EXISTS}" = "false" ] || [ "${RELEASE_EXISTS}" = "false" ] || [ "${FORCE_BUILD}" = "true" ]; then
@@ -91,11 +94,18 @@ jobs:
           # own state-file comparison would otherwise say "no changes" and skip everything.
           PAYLOAD="{\"ref\":\"${{ github.ref_name }}\",\"inputs\":{\"force_rebuild\":\"true\"}}"
 
-          curl -sS -L \
+          HTTP_STATUS="$(curl -sS -L \
             -X POST \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -H "Accept: application/vnd.github+json" \
+            -o /dev/null \
+            -w "%{http_code}" \
             "${{ github.api_url }}/repos/${{ github.repository }}/actions/workflows/build-python.yml/dispatches" \
-            -d "${PAYLOAD}"
+            -d "${PAYLOAD}")"
+
+          if [ "${HTTP_STATUS}" != "204" ]; then
+            echo "Build workflow dispatch failed with HTTP ${HTTP_STATUS}." >&2
+            exit 1
+          fi
 
           echo "Build workflow dispatched."
