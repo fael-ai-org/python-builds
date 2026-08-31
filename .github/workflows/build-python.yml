@@ -274,6 +274,10 @@ jobs:
     needs: [check-upstream, validate-scripts]
     if: needs.check-upstream.outputs.should_build == 'true' && needs.check-upstream.outputs.matrix_has_entries == 'true'
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.check-upstream.outputs.matrix) }}
@@ -343,6 +347,11 @@ jobs:
               --target-arch "${{ matrix.target_arch }}" \
               --output-dir dist
           fi
+
+      - name: Attest archive
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/${{ matrix.archive_name }}
 
       - id: upload-artifact
         name: Upload artifact

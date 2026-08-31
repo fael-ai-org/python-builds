@@ -84,10 +84,11 @@ Automatic version checks:
   for majors whose patch version changed. Unchanged majors are not rebuilt.
   Their existing archives are copied forward onto the new GitHub release so
   `/releases/latest` still contains a complete catalog.
-- A Monday run does not force a full rebuild. Use the check workflow's
-  `force_build` input (or the build workflow's `force_rebuild` / major/OS
-  filters) only when you intentionally want to rebuild already published
-  versions.
+- After each new archive is built, GitHub records a keyless artifact
+  attestation for that file digest. FAEL verifies SHA-256 and then checks
+  GitHub for an attestation from `FarisZahrani/python-builds` /
+  `build-python.yml`. New Monday patches are attested automatically; the app
+  does not need a version-specific update.
 
 ### What the Workflow Does
 
