@@ -150,6 +150,120 @@ def download_verified_source(version: str, stage_dir: Path) -> tuple[Path, str, 
     return archive, actual_sha256, expected_sha256 is not None
 
 
+def windows_tcl_layout_complete(python_dir: Path) -> bool:
+    tcl_root = python_dir / "tcl"
+    if not tcl_root.is_dir():
+        return False
+    names = [path.name.lower() for path in tcl_root.iterdir() if path.is_dir()]
+    has_tcl = any(name.startswith("tcl") for name in names)
+    has_tk = any(name.startswith("tk") for name in names)
+    return has_tcl and has_tk
+
+
+def map_tcl_zip_member(inner: str) -> str | None:
+    normalized = inner.replace("\\", "/").lstrip("/")
+    if not normalized or normalized.endswith("/"):
+        return None
+    if normalized.startswith("tcl_library/"):
+        return "tcl9.0/" + normalized[len("tcl_library/") :]
+    if normalized.startswith("tk_library/"):
+        return "tk9.0/" + normalized[len("tk_library/") :]
+    first = normalized.split("/", 1)[0].lower()
+    if first.startswith("tcl") or first.startswith("tk"):
+        return normalized
+    return None
+
+
+def extract_tcl_zip_overlay(archive_path: Path, dest_root: Path) -> bool:
+    try:
+        zf = zipfile.ZipFile(archive_path)
+    except zipfile.BadZipFile:
+        return False
+    extracted = False
+    with zf:
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            dest_rel = map_tcl_zip_member(info.filename)
+            if dest_rel is None:
+                continue
+            out = dest_root / dest_rel
+            out.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(info) as src, open(out, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+            extracted = True
+    return extracted
+
+
+def copy_windows_tcltk(src_dir: Path, build_out_dir: Path, python_dir: Path) -> None:
+    dest_root = python_dir / "tcl"
+
+    def copy_lib_tree(lib_dir: Path) -> None:
+        if not lib_dir.is_dir():
+            return
+        shutil.copytree(lib_dir, dest_root, dirs_exist_ok=True)
+
+    def copy_from_env(env_name: str) -> None:
+        env_path = build_out_dir / env_name
+        if not env_path.is_file():
+            return
+        lib_path_raw = env_path.read_text(encoding="utf-8-sig").strip()
+        if not lib_path_raw:
+            return
+        lib_path = Path(lib_path_raw)
+        if not lib_path.exists():
+            print(f"Warning: {env_name} points to missing path: {lib_path}")
+            return
+        parent = lib_path.parent
+        if parent.name.lower() == "lib":
+            copy_lib_tree(parent)
+            return
+        if lib_path.is_dir() and lib_path.name.lower().startswith(("tcl", "tk")):
+            dest_root.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(lib_path, dest_root / lib_path.name, dirs_exist_ok=True)
+            return
+        if parent.is_dir():
+            shutil.copytree(parent, dest_root, dirs_exist_ok=True)
+
+    copy_from_env("TCL_LIBRARY.env")
+    copy_from_env("TK_LIBRARY.env")
+
+    if not windows_tcl_layout_complete(python_dir):
+        externals = src_dir / "externals"
+        for lib_dir in [
+            *externals.glob("tcltk*/lib"),
+            *externals.glob("tcltk*/*/lib"),
+        ]:
+            copy_lib_tree(lib_dir)
+            if windows_tcl_layout_complete(python_dir):
+                break
+
+    if not windows_tcl_layout_complete(python_dir):
+        dest_root.mkdir(parents=True, exist_ok=True)
+        search_roots = [build_out_dir]
+        externals = src_dir / "externals"
+        if externals.is_dir():
+            search_roots.append(externals)
+        candidates: list[Path] = []
+        for root in search_roots:
+            candidates.extend(path for path in root.glob("*.dll") if "tcl" in path.name.lower() or "tk" in path.name.lower())
+            candidates.extend(root.rglob("libtcl*.zip"))
+            candidates.extend(root.rglob("libtk*.zip"))
+        for archive in candidates:
+            if "tcl" not in archive.name.lower() and "tk" not in archive.name.lower():
+                continue
+            extract_tcl_zip_overlay(archive, dest_root)
+            if windows_tcl_layout_complete(python_dir):
+                break
+
+    if not windows_tcl_layout_complete(python_dir):
+        raise RuntimeError(
+            "Windows Tcl/Tk library tree was not packaged under python/tcl. "
+            "CPython 3.14+ uses Tcl/Tk 9, which may embed scripts in DLLs "
+            "instead of writing TCL_LIBRARY.env to a lib/tcl8.6 path."
+        )
+
+
 def build_windows(version: str, target_arch: str, stage_dir: Path) -> None:
     if target_arch != "x86_64":
         raise RuntimeError(f"Unsupported Windows architecture: {target_arch}")
@@ -218,37 +332,7 @@ def build_windows(version: str, target_arch: str, stage_dir: Path) -> None:
     if include_src.exists():
         shutil.copytree(include_src, python_dir / "Include", dirs_exist_ok=True)
 
-    # Match the official Windows layout closely: bundle the Tcl/Tk runtime tree
-    # under python/tcl, which is where python.org installs place the resources.
-    def _read_env_file(path: Path) -> str | None:
-        if not path.is_file():
-            return None
-        text = path.read_text(encoding="utf-8-sig").strip()
-        return text or None
-
-    def _copy_tcltk_from_env(env_name: str) -> None:
-        env_path = build_out_dir / env_name
-        lib_path_raw = _read_env_file(env_path)
-        if not lib_path_raw:
-            return
-        lib_path = Path(lib_path_raw)
-        if not lib_path.exists():
-            print(f"Warning: {env_name} points to missing path: {lib_path}")
-            return
-
-        # The env file points at .../lib/tcl8.6 (or tk8.6). Copy the whole parent
-        # `lib` directory into python/tcl so the packaged layout matches the
-        # python.org Windows installer structure.
-        lib_parent = lib_path.parent
-        if lib_parent.name.lower() != "lib":
-            print(f"Warning: unexpected {env_name} layout: {lib_path}")
-            return
-
-        dest_root = python_dir / "tcl"
-        shutil.copytree(lib_parent, dest_root, dirs_exist_ok=True)
-
-    _copy_tcltk_from_env("TCL_LIBRARY.env")
-    _copy_tcltk_from_env("TK_LIBRARY.env")
+    copy_windows_tcltk(src_dir, build_out_dir, python_dir)
 
     license_txt = build_out_dir / "LICENSE.txt"
     if license_txt.is_file():
