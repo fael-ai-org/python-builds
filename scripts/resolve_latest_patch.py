@@ -16,8 +16,6 @@ SHA_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
 
 def fetch_tag_refs(majors: Iterable[str] | None = None) -> list[dict[str, str]]:
     tags: list[dict[str, str]] = []
-    wanted_majors = set(majors or [])
-    found_majors: set[str] = set()
     page = 1
     while True:
         url = f"https://api.github.com/repos/python/cpython/tags?per_page=100&page={page}"
@@ -37,17 +35,12 @@ def fetch_tag_refs(majors: Iterable[str] | None = None) -> list[dict[str, str]]:
             name = item.get("name", "")
             if not name:
                 continue
-            match = TAG_PATTERN.match(name)
             tags.append(
                 {
                     "name": name,
                     "tag_commit_sha": item.get("commit", {}).get("sha", ""),
                 }
             )
-            if match and match.group("major") in wanted_majors:
-                found_majors.add(match.group("major"))
-        if wanted_majors and wanted_majors.issubset(found_majors):
-            break
         page += 1
     return tags
 

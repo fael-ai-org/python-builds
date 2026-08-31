@@ -95,11 +95,12 @@ def main() -> None:
     elif args.force:
         release_reason = "forced-rebuild"
 
-    build_details = changed_details
-    build_versions = changed_versions
-    if has_actual_changes or args.force:
+    if args.force:
         build_details = current_details
         build_versions = current_versions
+    else:
+        build_details = changed_details
+        build_versions = changed_versions
 
     should_build = bool(build_details)
     release_tag = args.release_tag or default_release_tag(current_versions, has_actual_changes, args.force)

@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       force_build:
-        description: "Trigger a build even if no new versions are detected."
+        description: "Rebuild every configured major even if patches are unchanged."
         required: false
         default: "false"
         type: choice
@@ -26,15 +26,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Fetch tags
-        run: git fetch --tags --force --prune --prune-tags
-
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
 
       - name: Resolve latest Python patch versions
-        id: resolve
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -43,56 +39,47 @@ jobs:
             --details > resolved-details.json
           cat resolved-details.json
 
-      - name: Check if release already exists
+      - name: Plan incremental release
         id: check
         env:
           FORCE_BUILD: ${{ github.event.inputs.force_build || 'false' }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
-          # Derive the expected tag from resolved versions (sorted)
-          RELEASE_TAG="python-$(jq -r '[to_entries[] | .value.version] | sort | join("-")' resolved-details.json)"
+          PLAN_ARGS=()
+          if [ "${FORCE_BUILD}" = "true" ]; then
+            PLAN_ARGS+=(--force)
+          fi
 
+          python scripts/plan_release.py \
+            --resolved-file resolved-details.json \
+            --state-file release-state/latest.json \
+            "${PLAN_ARGS[@]}" > release-plan.json
+          cat release-plan.json
+
+          SHOULD_BUILD="$(jq -r '.should_build' release-plan.json)"
+          RELEASE_TAG="$(jq -r '.release_tag' release-plan.json)"
+          CHANGED="$(jq -r '.changed_majors | join(",")' release-plan.json)"
+          echo "should_build=${SHOULD_BUILD}" >> "$GITHUB_OUTPUT"
           echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
-
-          if git ls-remote --exit-code --tags origin "refs/tags/${RELEASE_TAG}" > /dev/null 2>&1; then
-            echo "Tag ${RELEASE_TAG} already exists — no build needed."
-            TAG_EXISTS="true"
-          else
-            echo "Tag ${RELEASE_TAG} not found — build needed."
-            TAG_EXISTS="false"
-          fi
-
-          RELEASE_STATUS="$(curl -sS -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "${{ github.api_url }}/repos/${{ github.repository }}/releases/tags/${RELEASE_TAG}")"
-          if [ "${RELEASE_STATUS}" = "200" ]; then
-            echo "Release ${RELEASE_TAG} already exists."
-            RELEASE_EXISTS="true"
-          elif [ "${RELEASE_STATUS}" = "404" ]; then
-            echo "Release ${RELEASE_TAG} not found; build needed."
-            RELEASE_EXISTS="false"
-          else
-            echo "Could not determine release state; GitHub returned HTTP ${RELEASE_STATUS}." >&2
-            exit 1
-          fi
-
-          if [ "${TAG_EXISTS}" = "false" ] || [ "${RELEASE_EXISTS}" = "false" ] || [ "${FORCE_BUILD}" = "true" ]; then
-            echo "should_build=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_build=false" >> "$GITHUB_OUTPUT"
-          fi
+          echo "Planned majors: ${CHANGED:-none}"
 
       - name: Trigger build workflow
         if: steps.check.outputs.should_build == 'true'
+        env:
+          FORCE_BUILD: ${{ github.event.inputs.force_build || 'false' }}
         run: |
           set -euo pipefail
 
-          # Always force rebuild — the tag check is the gate; the build workflow's
-          # own state-file comparison would otherwise say "no changes" and skip everything.
-          PAYLOAD="{\"ref\":\"${{ github.ref_name }}\",\"inputs\":{\"force_rebuild\":\"true\"}}"
+          FORCE_REBUILD="false"
+          if [ "${FORCE_BUILD}" = "true" ]; then
+            FORCE_REBUILD="true"
+          fi
+
+          PAYLOAD="$(jq -cn \
+            --arg ref "${{ github.ref_name }}" \
+            --arg force "${FORCE_REBUILD}" \
+            '{ref:$ref, inputs:{force_rebuild:$force}}')"
 
           HTTP_STATUS="$(curl -sS -L \
             -X POST \
@@ -108,4 +95,4 @@ jobs:
             exit 1
           fi
 
-          echo "Build workflow dispatched."
+          echo "Build workflow dispatched (force_rebuild=${FORCE_REBUILD})."

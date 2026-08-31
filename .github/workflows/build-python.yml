@@ -126,7 +126,7 @@ jobs:
             RELEASE_TAG_EFFECTIVE="${EXPECTED_RELEASE_TAG}"
           fi
 
-          if [ "${RELEASE_AVAILABLE}" != "true" ] || [ -n "${MAJOR_FILTER_INPUT}" ] || [ "${TARGET_OS_FILTER_INPUT}" != "any" ] || [ "${TARGET_ARCH_FILTER_INPUT}" != "any" ]; then
+          if [ -n "${MAJOR_FILTER_INPUT}" ] || [ "${TARGET_OS_FILTER_INPUT}" != "any" ] || [ "${TARGET_ARCH_FILTER_INPUT}" != "any" ]; then
             FORCE_REBUILD_EFFECTIVE="true"
           fi
 
@@ -427,21 +427,61 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Restore release plan
+        run: |
+          printf '%s' '${{ needs.check-upstream.outputs.release_plan_json }}' > release-plan.json
+          cat release-plan.json
+
       - name: Download all artifacts
         uses: actions/download-artifact@v8
         with:
           path: release-assets
           merge-multiple: true
 
+      - name: Carry forward unchanged release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          PREVIOUS_TAG="$(jq -r '.release_tag // empty' release-state/latest.json)"
+          if [ -z "${PREVIOUS_TAG}" ]; then
+            echo "No previous release tag; publishing newly built assets only."
+            exit 0
+          fi
+          if [ "${PREVIOUS_TAG}" = "${{ needs.check-upstream.outputs.release_tag }}" ]; then
+            echo "Release tag unchanged; skipping asset carry-forward."
+            exit 0
+          fi
+
+          mkdir -p previous-assets
+          if ! gh release download "${PREVIOUS_TAG}" --dir previous-assets --pattern 'python-*'; then
+            echo "Could not download previous release ${PREVIOUS_TAG}; publishing newly built assets only."
+            exit 0
+          fi
+
+          mapfile -t CHANGED_VERSIONS < <(jq -r '.changed_versions | to_entries[] | .value' release-plan.json)
+          for asset in previous-assets/*; do
+            [ -e "${asset}" ] || continue
+            name="$(basename "${asset}")"
+            skip="false"
+            for version in "${CHANGED_VERSIONS[@]}"; do
+              case "${name}" in
+                python-"${version}"-*) skip="true" ;;
+              esac
+            done
+            if [ "${skip}" = "true" ]; then
+              echo "Replacing previous ${name} with newly built artifact."
+              continue
+            fi
+            echo "Keeping ${name} from ${PREVIOUS_TAG}."
+            cp "${asset}" "release-assets/${name}"
+          done
+
       - name: Generate checksums
         run: |
           cd release-assets
           find . -maxdepth 1 -type f ! -name '*.sha256' | sort | xargs sha256sum > SHA256SUMS.txt
-
-      - name: Restore release plan
-        run: |
-          printf '%s' '${{ needs.check-upstream.outputs.release_plan_json }}' > release-plan.json
-          cat release-plan.json
 
       - name: Update release state files
         env:

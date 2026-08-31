@@ -80,17 +80,20 @@ Automatic version checks:
 - `.github/workflows/check.yml` runs every Monday at 04:00 UTC and can also be
   started manually.
 - The checker resolves the latest CPython patch for every configured major,
-  compares the combined release tag, and dispatches the build workflow when a
-  patch is missing.
-- Release-state and tag metadata include the immutable CPython commit SHA. A
-  GitHub API error or failed build dispatch stops the check instead of being
-  treated as “no update”.
+  compares it with `release-state/latest.json`, and dispatches a build only
+  for majors whose patch version changed. Unchanged majors are not rebuilt.
+  Their existing archives are copied forward onto the new GitHub release so
+  `/releases/latest` still contains a complete catalog.
+- A Monday run does not force a full rebuild. Use the check workflow's
+  `force_build` input (or the build workflow's `force_rebuild` / major/OS
+  filters) only when you intentionally want to rebuild already published
+  versions.
 
 ### What the Workflow Does
 
 1. Resolves latest patch versions for configured majors.
 2. Compares with `release-state/latest.json`.
-3. Builds only changed majors by default.
+3. Builds only majors whose patch version changed, unless a force/filter rebuild was requested.
 4. Validates each built archive with fast/full checks.
 5. Publishes artifacts and checksums.
 6. Commits updated release-state snapshot files.
