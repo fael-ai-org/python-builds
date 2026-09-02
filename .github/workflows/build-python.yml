@@ -469,23 +469,10 @@ jobs:
             exit 0
           fi
 
-          mapfile -t CHANGED_VERSIONS < <(jq -r '.changed_versions | to_entries[] | .value' release-plan.json)
-          for asset in previous-assets/*; do
-            [ -e "${asset}" ] || continue
-            name="$(basename "${asset}")"
-            skip="false"
-            for version in "${CHANGED_VERSIONS[@]}"; do
-              case "${name}" in
-                python-"${version}"-*) skip="true" ;;
-              esac
-            done
-            if [ "${skip}" = "true" ]; then
-              echo "Replacing previous ${name} with newly built artifact."
-              continue
-            fi
-            echo "Keeping ${name} from ${PREVIOUS_TAG}."
-            cp "${asset}" "release-assets/${name}"
-          done
+          python scripts/carry_forward_release_assets.py \
+            --plan-file release-plan.json \
+            --source-dir previous-assets \
+            --dest-dir release-assets
 
       - name: Generate checksums
         run: |
