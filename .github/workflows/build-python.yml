@@ -194,7 +194,7 @@ jobs:
                   "archive_ext": ".tar.gz",
               },
               {
-                  "runner": "macos-14",
+                  "runner": "macos-15",
                   "target_os": "macos",
                   "target_arch": "arm64",
                   "archive_ext": ".tar.gz",
