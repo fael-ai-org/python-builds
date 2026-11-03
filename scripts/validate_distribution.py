@@ -90,6 +90,23 @@ def compare_stdlib_sets(baseline_python: str, packaged_python: Path) -> dict:
     }
 
 
+def check_virtual_environment(packaged_python: Path, destination: Path) -> dict:
+    """Exercise creation and pip, rather than only importing the venv module."""
+    created = subprocess.run(
+        [str(packaged_python), "-I", "-m", "venv", str(destination)],
+        capture_output=True, text=True, timeout=180, check=False,
+    )
+    if created.returncode:
+        return {"passed": False, "stage": "creation", "returncode": created.returncode,
+                "stderr": created.stderr[-2000:]}
+    executable = destination / ("Scripts/python.exe" if (destination / "Scripts").is_dir() else "bin/python")
+    checked = subprocess.run(
+        [str(executable), "-I", "-m", "pip", "--version"],
+        capture_output=True, text=True, timeout=60, check=False,
+    )
+    return {"passed": checked.returncode == 0, "stage": "pip", "returncode": checked.returncode}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate a packaged portable Python archive.")
     parser.add_argument("archive", help="Path to a built archive (.zip or .tar.gz).")
@@ -115,6 +132,7 @@ def main() -> int:
         fast_exit, fast_payload = run_check(checker, packaged_python, "fast", args.full_timeout_seconds)
         full_exit, full_payload = run_check(checker, packaged_python, "full", args.full_timeout_seconds)
         full_unexpected_failures = int(full_payload.get("unexpected_failure_count", 0)) > 0
+        virtual_environment = check_virtual_environment(packaged_python, Path(tmpdir) / "venv-validation")
 
         stdlib_compare = None
         compare_failed = False
@@ -131,12 +149,13 @@ def main() -> int:
             "full_exit": full_exit,
             "full": full_payload,
             "stdlib_compare": stdlib_compare,
+            "virtual_environment": virtual_environment,
         }
         print(json.dumps(summary, indent=2))
 
         # Fast checks and full-mode unexpected failures are release gates.
         # Platform-specific/optional modules are handled in check_stdlib.py.
-        if fast_exit != 0 or full_unexpected_failures or compare_failed:
+        if fast_exit != 0 or full_unexpected_failures or compare_failed or not virtual_environment["passed"]:
             return 1
     return 0
 
