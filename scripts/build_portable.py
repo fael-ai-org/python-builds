@@ -264,16 +264,19 @@ def copy_windows_tcltk(src_dir: Path, build_out_dir: Path, python_dir: Path) -> 
         )
 
 
-def copy_windows_development_files(src_dir: Path, build_out_dir: Path, python_dir: Path) -> None:
+def copy_windows_development_files(src_dir: Path, build_out_dir: Path, python_dir: Path, *, version: str) -> None:
     """Preserve the matching build's venv redirectors and extension SDK."""
     launchers = python_dir / "Lib" / "venv" / "scripts" / "nt"
+    # Installed CPython <=3.12 looks for python[w].exe redirectors here;
+    # CPython >=3.13 uses the build output's venv[w]launcher.exe names.
+    modern_launchers = tuple(int(part) for part in version.split(".")[:2]) >= (3, 13)
     # Newer CPython builds generate this header; older releases keep it in PC.
     configuration = build_out_dir / "pyconfig.h"
     if not configuration.is_file():
         configuration = src_dir / "PC" / "pyconfig.h"
     required = [
-        (build_out_dir / "venvlauncher.exe", launchers / "venvlauncher.exe"),
-        (build_out_dir / "venvwlauncher.exe", launchers / "venvwlauncher.exe"),
+        (build_out_dir / "venvlauncher.exe", launchers / ("venvlauncher.exe" if modern_launchers else "python.exe")),
+        (build_out_dir / "venvwlauncher.exe", launchers / ("venvwlauncher.exe" if modern_launchers else "pythonw.exe")),
         (configuration, python_dir / "Include" / "pyconfig.h"),
     ]
     libraries = sorted(build_out_dir.glob("python*.lib"))
@@ -356,7 +359,7 @@ def build_windows(version: str, target_arch: str, stage_dir: Path) -> None:
     if include_src.exists():
         shutil.copytree(include_src, python_dir / "Include", dirs_exist_ok=True)
 
-    copy_windows_development_files(src_dir, build_out_dir, python_dir)
+    copy_windows_development_files(src_dir, build_out_dir, python_dir, version=version)
 
     copy_windows_tcltk(src_dir, build_out_dir, python_dir)
 
