@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "release_tag": "python-3.10.22-3.11.18-3.12.16-3.13.18-3.14.10",
-  "release_reason": "version-bump",
-  "released_at_utc": "2026-10-26T10:18:44.687948+00:00",
+  "release_tag": "python-3.10.22-3.11.18-3.12.16-3.13.18-3.14.10-build-42021362834",
+  "release_reason": "forced-rebuild",
+  "released_at_utc": "2026-11-05T11:50:03.113481+00:00",
   "versions": {
     "3.10": "3.10.22",
     "3.11": "3.11.18",
@@ -38,12 +38,18 @@
     }
   },
   "changed_versions": {
+    "3.10": "3.10.22",
     "3.11": "3.11.18",
     "3.12": "3.12.16",
     "3.13": "3.13.18",
     "3.14": "3.14.10"
   },
   "changed_details": {
+    "3.10": {
+      "version": "3.10.22",
+      "tag": "v3.10.22",
+      "tag_commit_sha": "acb4dc12b6df8615af7b43120ef601e04072f7d2"
+    },
     "3.11": {
       "version": "3.11.18",
       "tag": "v3.11.18",
@@ -66,15 +72,16 @@
     }
   },
   "changed_majors": [
+    "3.10",
     "3.11",
     "3.12",
     "3.13",
     "3.14"
   ],
-  "build_source_commit": "9a645442a58fec38e928d44d627dd08d6cd5196d",
+  "build_source_commit": "7cd994d0b88892f6f8ea3aa1aa1de5c0b74d9d55",
   "workflow_run": {
-    "id": "40303515158",
-    "url": "https://github.com/fael-ai-org/python-builds/actions/runs/40303515158",
+    "id": "42021362834",
+    "url": "https://github.com/fael-ai-org/python-builds/actions/runs/42021362834",
     "repository": "fael-ai-org/python-builds",
     "event_name": "workflow_dispatch"
   }
