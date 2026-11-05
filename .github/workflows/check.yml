@@ -16,7 +16,7 @@ on:
 
 permissions:
   actions: write
-  contents: read
+  contents: write
 
 jobs:
   check:
@@ -39,6 +39,11 @@ jobs:
             --details > resolved-details.json
           cat resolved-details.json
 
+      - name: Inspect recorded release inventory
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/release_inventory.py fetch --state-file release-state/latest.json --output release-inventory.json
+
       - name: Plan incremental release
         id: check
         env:
@@ -54,6 +59,8 @@ jobs:
           python scripts/plan_release.py \
             --resolved-file resolved-details.json \
             --state-file release-state/latest.json \
+            --inventory-file release-inventory.json \
+            --candidate-suffix "${{ github.run_id }}" \
             "${PLAN_ARGS[@]}" > release-plan.json
           cat release-plan.json
 

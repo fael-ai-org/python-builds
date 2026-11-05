@@ -61,6 +61,8 @@ permissions:
 
 jobs:
   check-upstream:
+    permissions:
+      contents: write
     if: github.event.inputs.signed_release_id == ''
     runs-on: ubuntu-latest
     outputs:
@@ -87,42 +89,10 @@ jobs:
           python scripts/resolve_latest_patch.py --majors-file config/majors.json --details > resolved-details.json
           cat resolved-details.json
 
-      - id: release-exists
+      - name: Inspect recorded release inventory
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          RELEASE_TAG="python-$(jq -r '[to_entries[] | .value.version] | join("-")' resolved-details.json)"
-          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
-
-          if git ls-remote --exit-code --tags origin "refs/tags/${RELEASE_TAG}" > /dev/null 2>&1; then
-            TAG_EXISTS="true"
-          else
-            TAG_EXISTS="false"
-          fi
-
-          RELEASE_STATUS="$(curl -sS -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "${{ github.api_url }}/repos/${{ github.repository }}/releases/tags/${RELEASE_TAG}")"
-          if [ "${RELEASE_STATUS}" = "200" ]; then
-            RELEASE_EXISTS="true"
-          else
-            RELEASE_EXISTS="false"
-          fi
-
-          RELEASE_AVAILABLE="false"
-          if [ "${TAG_EXISTS}" = "true" ] && [ "${RELEASE_EXISTS}" = "true" ]; then
-            RELEASE_AVAILABLE="true"
-          fi
-
-          echo "tag_exists=${TAG_EXISTS}" >> "$GITHUB_OUTPUT"
-          echo "release_exists=${RELEASE_EXISTS}" >> "$GITHUB_OUTPUT"
-          echo "release_available=${RELEASE_AVAILABLE}" >> "$GITHUB_OUTPUT"
-          echo "Expected release tag: ${RELEASE_TAG}"
-          echo "Tag exists: ${TAG_EXISTS}"
-          echo "Release exists: ${RELEASE_EXISTS}"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/release_inventory.py fetch --state-file release-state/latest.json --output release-inventory.json
 
       - id: plan
         env:
@@ -131,18 +101,12 @@ jobs:
           MAJOR_FILTER_INPUT: ${{ github.event.inputs.major_filter || '' }}
           TARGET_OS_FILTER_INPUT: ${{ github.event.inputs.target_os_filter || 'any' }}
           TARGET_ARCH_FILTER_INPUT: ${{ github.event.inputs.target_arch_filter || 'any' }}
-          RELEASE_AVAILABLE: ${{ steps.release-exists.outputs.release_available }}
-          EXPECTED_RELEASE_TAG: ${{ steps.release-exists.outputs.release_tag }}
         run: |
           set -euo pipefail
 
           PLAN_ARGS=()
           FORCE_REBUILD_EFFECTIVE="${FORCE_REBUILD}"
           RELEASE_TAG_EFFECTIVE="${RELEASE_TAG_INPUT}"
-          if [ -z "${RELEASE_TAG_EFFECTIVE}" ]; then
-            RELEASE_TAG_EFFECTIVE="${EXPECTED_RELEASE_TAG}"
-          fi
-
           if [ -n "${MAJOR_FILTER_INPUT}" ] || [ "${TARGET_OS_FILTER_INPUT}" != "any" ] || [ "${TARGET_ARCH_FILTER_INPUT}" != "any" ]; then
             FORCE_REBUILD_EFFECTIVE="true"
           fi
@@ -157,6 +121,8 @@ jobs:
           python scripts/plan_release.py \
             --resolved-file resolved-details.json \
             --state-file release-state/latest.json \
+            --inventory-file release-inventory.json \
+            --candidate-suffix "${{ github.run_id }}" \
             "${PLAN_ARGS[@]}" > release-plan.json
 
           cat release-plan.json
@@ -191,61 +157,10 @@ jobs:
           if target_arch_filter not in valid_arch_filters:
               raise SystemExit(f"Invalid target_arch_filter: {target_arch_filter}")
 
-          targets = [
-              {
-                  "runner": "ubuntu-24.04",
-                  "target_os": "linux",
-                  "target_arch": "x86_64",
-                  "archive_ext": ".tar.gz",
-              },
-              {
-                  "runner": "windows-2022",
-                  "target_os": "windows",
-                  "target_arch": "x86_64",
-                  "archive_ext": ".zip",
-              },
-              {
-                  "runner": "macos-15-intel",
-                  "target_os": "macos",
-                  "target_arch": "x86_64",
-                  "archive_ext": ".tar.gz",
-              },
-              {
-                  "runner": "macos-15",
-                  "target_os": "macos",
-                  "target_arch": "arm64",
-                  "archive_ext": ".tar.gz",
-              },
-          ]
-
-          include = []
-          for major, full_version in versions.items():
-              if major_filter and major != major_filter:
-                  continue
-
-              detail = resolved.get(major, {})
-              cpython_tag = detail.get("tag", f"v{full_version}")
-              cpython_tag_commit_sha = detail.get("tag_commit_sha", "")
-              for target in targets:
-                  if target_os_filter != "any" and target["target_os"] != target_os_filter:
-                      continue
-                  if target_arch_filter != "any" and target["target_arch"] != target_arch_filter:
-                      continue
-
-                  artifact_name = (
-                      f"python-{full_version}-{target['target_os']}-{target['target_arch']}"
-                  )
-                  include.append(
-                      {
-                          "major": major,
-                          "python_version": full_version,
-                          "cpython_tag": cpython_tag,
-                          "cpython_tag_commit_sha": cpython_tag_commit_sha,
-                          "artifact_name": artifact_name,
-                          "archive_name": f"{artifact_name}{target['archive_ext']}",
-                          **target,
-                      }
-                  )
+          include = [target for target in plan["build_targets"]
+                     if (not major_filter or target["major"] == major_filter)
+                     and (target_os_filter == "any" or target["target_os"] == target_os_filter)
+                     and (target_arch_filter == "any" or target["target_arch"] == target_arch_filter)]
 
           if versions and not include:
               raise SystemExit(
@@ -464,37 +379,18 @@ jobs:
           path: release-assets
           merge-multiple: true
 
-      - name: Carry forward unchanged release assets
+      - name: Carry forward verified unchanged release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          PREVIOUS_TAG="$(jq -r '.release_tag // empty' release-state/latest.json)"
-          if [ -z "${PREVIOUS_TAG}" ]; then
-            echo "No previous release tag; publishing newly built assets only."
-            exit 0
-          fi
-          if [ "${PREVIOUS_TAG}" = "${{ needs.check-upstream.outputs.release_tag }}" ]; then
-            echo "Release tag unchanged; skipping asset carry-forward."
-            exit 0
-          fi
+        run: python scripts/carry_forward_release_assets.py --plan-file release-plan.json --dest-dir release-assets --download
 
-          mkdir -p previous-assets
-          if ! gh release download "${PREVIOUS_TAG}" --dir previous-assets --pattern 'python-*'; then
-            echo "Could not download previous release ${PREVIOUS_TAG}; publishing newly built assets only."
-            exit 0
-          fi
+      - name: Verify complete release inventory and checksums
+        run: python scripts/release_inventory.py verify --plan-file release-plan.json --directory release-assets
 
-          python scripts/carry_forward_release_assets.py \
-            --plan-file release-plan.json \
-            --source-dir previous-assets \
-            --dest-dir release-assets
-
-      - name: Generate checksums
-        run: |
-          cd release-assets
-          find . -maxdepth 1 -type f ! -name '*.sha256' | sort | xargs sha256sum > SHA256SUMS.txt
+      - name: Protect published and signed releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/release_inventory.py guard-target --plan-file release-plan.json
 
       - name: Update release state files
         env:

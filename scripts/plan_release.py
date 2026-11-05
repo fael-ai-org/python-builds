@@ -5,6 +5,8 @@ import argparse
 import json
 from pathlib import Path
 
+from release_inventory import TARGETS, archive_name, available_archives, build_target, expected_archives, valid_asset
+
 
 def load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
@@ -55,6 +57,8 @@ def main() -> None:
         description="Plan which Python versions need to be built and released."
     )
     parser.add_argument("--resolved-file", required=True, help="Path to resolved details JSON.")
+    parser.add_argument("--inventory-file", help="Live inventory of the state release; required in CI.")
+    parser.add_argument("--candidate-suffix", help="Unique build ID for a fresh candidate when the state release is public.")
     parser.add_argument(
         "--state-file",
         default="release-state/latest.json",
@@ -102,8 +106,44 @@ def main() -> None:
         build_details = changed_details
         build_versions = changed_versions
 
-    should_build = bool(build_details)
-    release_tag = args.release_tag or default_release_tag(current_versions, has_actual_changes, args.force)
+    inventory = load_json(Path(args.inventory_file)) if args.inventory_file else None
+    available = available_archives(inventory) if inventory is not None else None
+    if inventory and inventory.get("tag_name") and inventory["tag_name"] != (previous_payload or {}).get("release_tag"):
+        raise ValueError("Inventory does not match the recorded release")
+    build_targets = []
+    for major, detail in sorted(current_details.items()):
+        for target in TARGETS:
+            name = archive_name(detail["version"], target)
+            if major in build_details or (available is not None and name not in available):
+                build_targets.append(build_target(major, detail, target))
+    # The release-level checksum index is required too. Rebuild one target to
+    # enter the existing build/validation/release path, then regenerate the
+    # complete index from verified bytes without weakening those dependencies.
+    if current_details and inventory is not None and not build_targets:
+        indexes = [a for a in inventory.get("assets", []) if a["name"] == "SHA256SUMS.txt"]
+        if not indexes or not valid_asset(indexes[0]):
+            major = sorted(current_details)[0]
+            detail, target = current_details[major], TARGETS[0]
+            build_targets.append(build_target(major, detail, target))
+    build_details = {major: current_details[major] for major in sorted({t["major"] for t in build_targets})}
+    build_versions = versions_from_details(build_details)
+    should_build = bool(build_targets)
+    if should_build and not has_actual_changes and not args.force:
+        release_reason = "missing-assets"
+    release_tag = args.release_tag or default_release_tag(current_versions, should_build, args.force)
+    if (should_build and inventory and release_tag == inventory.get("tag_name")
+            and (not inventory.get("draft") or inventory.get("immutable"))):
+        import re
+        if not args.candidate_suffix or not re.fullmatch(r"[0-9]+", args.candidate_suffix):
+            raise ValueError("A unique candidate suffix is required; published releases are not replaced")
+        release_tag += "-build-" + args.candidate_suffix
+
+    archives = expected_archives(current_versions)
+    carry_names = archives | {name + ".sha256" for name in archives}
+    carry_sources = [{key: asset[key] for key in ("name", "id", "size", "digest")}
+                     for asset in (inventory or {}).get("assets", [])
+                     if asset["name"] in carry_names and valid_asset(asset)
+                     and type(asset.get("id")) is int and asset["id"] > 0]
 
     result = {
         "should_build": should_build,
@@ -115,6 +155,10 @@ def main() -> None:
         "changed_versions": build_versions,
         "changed_details": build_details,
         "changed_majors": sorted(build_versions),
+        "build_targets": build_targets,
+        "inventory_checked": inventory is not None,
+        "carry_forward_digests": {a["name"]: a["digest"][7:] for a in carry_sources},
+        "carry_forward_sources": carry_sources,
         "release_tag": release_tag,
     }
     print(json.dumps(result, indent=2))
