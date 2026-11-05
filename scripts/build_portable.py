@@ -264,6 +264,30 @@ def copy_windows_tcltk(src_dir: Path, build_out_dir: Path, python_dir: Path) -> 
         )
 
 
+def copy_windows_development_files(src_dir: Path, build_out_dir: Path, python_dir: Path) -> None:
+    """Preserve the matching build's venv redirectors and extension SDK."""
+    launchers = python_dir / "Lib" / "venv" / "scripts" / "nt"
+    # Newer CPython builds generate this header; older releases keep it in PC.
+    configuration = build_out_dir / "pyconfig.h"
+    if not configuration.is_file():
+        configuration = src_dir / "PC" / "pyconfig.h"
+    required = [
+        (build_out_dir / "venvlauncher.exe", launchers / "venvlauncher.exe"),
+        (build_out_dir / "venvwlauncher.exe", launchers / "venvwlauncher.exe"),
+        (configuration, python_dir / "Include" / "pyconfig.h"),
+    ]
+    libraries = sorted(build_out_dir.glob("python*.lib"))
+    if not libraries:
+        raise RuntimeError("Windows Python build is missing its import libraries")
+    required.extend((path, python_dir / "libs" / path.name) for path in libraries)
+    for source, _ in required:
+        if not source.is_file() or not source.stat().st_size:
+            raise RuntimeError(f"Required Windows development file is missing: {source.name}")
+    for source, destination in required:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+
+
 def build_windows(version: str, target_arch: str, stage_dir: Path) -> None:
     if target_arch != "x86_64":
         raise RuntimeError(f"Unsupported Windows architecture: {target_arch}")
@@ -331,6 +355,8 @@ def build_windows(version: str, target_arch: str, stage_dir: Path) -> None:
     include_src = src_dir / "Include"
     if include_src.exists():
         shutil.copytree(include_src, python_dir / "Include", dirs_exist_ok=True)
+
+    copy_windows_development_files(src_dir, build_out_dir, python_dir)
 
     copy_windows_tcltk(src_dir, build_out_dir, python_dir)
 
