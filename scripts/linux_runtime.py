@@ -36,9 +36,7 @@ def configure_linux_runtime(root: Path) -> None:
     for path in sorted(lib.iterdir()):
         if ".so" not in path.name or path.name.startswith("libpython") or not is_elf(path):
             continue
-        soname = patch_value("--print-soname", path)
-        if not soname:
-            raise RuntimeError(f"Bundled library has no SONAME: {path.name}")
+        soname = patch_value("--print-soname", path) or path.name
         digest = hashlib.sha256(path.read_bytes()).hexdigest()[:16]
         private = f"libpyportable-{digest}-{soname}"
         for alias in (path.name, soname):

@@ -77,6 +77,21 @@ class LinuxRuntimeTests(unittest.TestCase):
             self.assertTrue(original.exists())
             self.assertTrue(alias.exists())
 
+    def test_library_without_soname_receives_private_identity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            package, _, _ = self.fixture(root)
+            source = root / "unnamed.c"
+            source.write_text("int result(void) { return 42; }\n")
+            self.library(source, package / "lib/libunnamed.so")
+            configure_linux_runtime(package)
+            libraries = list((package / "lib").glob("libpyportable-*-libunnamed.so"))
+            self.assertEqual(len(libraries), 1)
+            code = f"import ctypes; assert ctypes.CDLL({str(libraries[0])!r}).result() == 42"
+            run = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertTrue(validate_linux_runtime(package)["passed"])
+
     def test_validation_rejects_launcher_environment_leak_and_generic_libraries(self):
         with tempfile.TemporaryDirectory() as temporary:
             package, _, _ = self.fixture(Path(temporary))
