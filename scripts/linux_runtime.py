@@ -26,6 +26,18 @@ def patch_value(option: str, path: Path) -> str:
     return subprocess.check_output(["patchelf", option, str(path)], text=True).strip()
 
 
+def load_segments(path: Path) -> list[tuple[int, int, int]]:
+    output = subprocess.check_output(["readelf", "-lW", str(path)], text=True)
+    segments = []
+    for line in output.splitlines():
+        fields = line.split()
+        if fields and fields[0] == "LOAD":
+            segments.append((int(fields[1], 16), int(fields[2], 16), int(fields[-1], 16)))
+    if not segments:
+        raise RuntimeError(f"ELF runtime has no loadable segments: {path.name}")
+    return segments
+
+
 def configure_linux_runtime(root: Path) -> None:
     """Namespace third-party libraries before rewriting every ELF consumer.
 
@@ -60,7 +72,6 @@ def configure_linux_runtime(root: Path) -> None:
             if destination.exists():
                 raise RuntimeError(f"Private library destination already exists: {private}")
             path.rename(destination)
-            subprocess.run(["patchelf", "--set-soname", private, str(destination)], check=True)
             installed.add(private)
     for path in lib.iterdir():
         if path.is_symlink() and path.name in aliases:
@@ -68,12 +79,20 @@ def configure_linux_runtime(root: Path) -> None:
 
     for path in elf_files(root):
         needed = patch_value("--print-needed", path).splitlines()
+        alignment = max(4096, *(segment[2] for segment in load_segments(path)))
+        if alignment > 2**30 or alignment & (alignment - 1):
+            raise RuntimeError(f"Invalid ELF segment alignment: {path.name}")
+        # Preserve the input's segment alignment. In particular, manylinux
+        # libraries can use 2 MiB alignment even on a 4 KiB-page host.
+        command = ["patchelf", "--page-size", str(alignment)]
+        if path.parent == lib and path.name in installed:
+            command.extend(["--set-soname", path.name])
         for name in needed:
             if name in aliases:
-                subprocess.run(["patchelf", "--replace-needed", name, aliases[name], str(path)], check=True)
+                command.extend(["--replace-needed", name, aliases[name]])
         relative = os.path.relpath(lib, path.parent).replace(os.sep, "/")
         runpath = "$ORIGIN" if relative == "." else "$ORIGIN/" + relative
-        subprocess.run(["patchelf", "--set-rpath", runpath, str(path)], check=True)
+        subprocess.run([*command, "--set-rpath", runpath, str(path)], check=True)
 
 
 def validate_linux_runtime(root: Path) -> dict:
@@ -84,6 +103,9 @@ def validate_linux_runtime(root: Path) -> dict:
         return {"passed": False, "failures": ["No packaged ELF files found"]}
     for path in files:
         relative = path.relative_to(root).as_posix()
+        for offset, address, alignment in load_segments(path):
+            if alignment > 1 and offset % alignment != address % alignment:
+                failures.append(f"{relative}: ELF load segment alignment is inconsistent")
         output = subprocess.check_output(["readelf", "-d", str(path)], text=True)
         for line in output.splitlines():
             if not any(tag in line for tag in ("(NEEDED)", "(SONAME)")):

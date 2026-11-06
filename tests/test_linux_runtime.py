@@ -22,7 +22,8 @@ class LinuxRuntimeTests(unittest.TestCase):
         subprocess.run(["cc", "-shared", "-fPIC", str(source), "-o", str(output), *options],
                        check=True, capture_output=True, text=True)
 
-    def fixture(self, root):
+    def fixture(self, root, *, large_alignment=False):
+        alignment = ["-Wl,-z,max-page-size=0x200000"] if large_alignment else []
         package, host = root / "python", root / "host"
         lib = package / "lib"
         extension = lib / "python3.fixture/lib-dynload/consumer.so"
@@ -35,11 +36,11 @@ class LinuxRuntimeTests(unittest.TestCase):
             versions = directory / "versions.map"
             versions.write_text(version + " { global: dependency_value; local: *; };\n")
             self.library(source, directory / "libfixture.so.1", f"-DVALUE={value}",
-                         "-Wl,-soname,libfixture.so.1", f"-Wl,--version-script={versions}")
+                         "-Wl,-soname,libfixture.so.1", f"-Wl,--version-script={versions}", *alignment)
         consumer = root / "consumer.c"
         consumer.write_text("extern int dependency_value(void); int result(void) { return dependency_value(); }\n")
-        self.library(consumer, extension, f"-L{lib}", "-l:libfixture.so.1", "-Wl,-rpath,$ORIGIN/../..")
-        self.library(consumer, host / "libhost.so", f"-L{host}", "-l:libfixture.so.1", "-Wl,-rpath,$ORIGIN")
+        self.library(consumer, extension, f"-L{lib}", "-l:libfixture.so.1", "-Wl,-rpath,$ORIGIN/../..", *alignment)
+        self.library(consumer, host / "libhost.so", f"-L{host}", "-l:libfixture.so.1", "-Wl,-rpath,$ORIGIN", *alignment)
         return package, host, extension.relative_to(package)
 
     def load(self, extension, host, reverse=False):
@@ -76,6 +77,14 @@ class LinuxRuntimeTests(unittest.TestCase):
                 configure_linux_runtime(package)
             self.assertTrue(original.exists())
             self.assertTrue(alias.exists())
+
+    def test_large_segment_alignment_survives_dependency_and_string_table_growth(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            package, host, extension = self.fixture(Path(temporary), large_alignment=True)
+            configure_linux_runtime(package)
+            self.assertTrue(validate_linux_runtime(package)["passed"])
+            run = self.load(package / extension, host)
+            self.assertEqual(run.returncode, 0, run.stderr)
 
     def test_library_without_soname_receives_private_identity(self):
         with tempfile.TemporaryDirectory() as temporary:
