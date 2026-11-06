@@ -67,7 +67,9 @@ class ReleaseInventoryTests(unittest.TestCase):
                 self.assertEqual(plan["release_reason"], "missing-assets")
 
     def test_missing_release_rebuilds_all_targets(self):
-        self.assertEqual(len(self.plan({"assets": []})["build_targets"]), 8)
+        plan = self.plan({"assets": []})
+        self.assertEqual(len(plan["build_targets"]), 8)
+        self.assertEqual(plan["release_tag"], "python-3.12.16-3.13.18")
 
     def test_missing_global_checksum_index_is_repaired(self):
         inventory = self.inventory()
