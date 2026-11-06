@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from resolve_latest_patch import details_for_version, fetch_tag_refs, latest_detail_for_major
+from linux_runtime import configure_linux_runtime
 
 
 MANYLINUX_OPENSSL_VERSION = "3.0.21"
@@ -714,56 +715,6 @@ def bundle_macos_runtime_dependencies(python_dir: Path) -> None:
             )
 
 
-def rewrite_linux_rpaths(python_dir: Path) -> None:
-    for so in sorted(python_dir.rglob("*.so")):
-        if so.is_file() and not so.is_symlink():
-            relative_lib_dir = os.path.relpath(python_dir / "lib", so.parent)
-            if relative_lib_dir == ".":
-                rpath = "$ORIGIN"
-            else:
-                rpath = f"$ORIGIN/{relative_lib_dir.replace(os.sep, '/')}"
-            ensure_writable(so)
-            run(["patchelf", "--set-rpath", rpath, str(so)])
-    # Patch versioned shared libraries directly in lib/ (e.g. libssl.so.3,
-    # libcrypto.so.3, libpython3.x.so.1.0) so they can locate their sibling
-    # bundled dependencies via $ORIGIN instead of the manylinux build paths.
-    lib_dir = python_dir / "lib"
-    for versioned_so in sorted(lib_dir.glob("*.so.*")):
-        if versioned_so.is_file() and not versioned_so.is_symlink():
-            ensure_writable(versioned_so)
-            run(["patchelf", "--set-rpath", "$ORIGIN", str(versioned_so)])
-
-
-def install_linux_python_launcher(python_dir: Path) -> None:
-    bin_dir = python_dir / "bin"
-    python_link = bin_dir / "python3"
-    if not python_link.exists():
-        return
-
-    python_bin = python_link.resolve()
-    if not python_bin.is_file() or python_bin.suffix == ".bin":
-        return
-
-    real_bin = python_bin.with_name(f"{python_bin.name}.bin")
-    if real_bin.exists():
-        return
-
-    python_bin.rename(real_bin)
-    python_bin.write_text(
-        "#!/usr/bin/env sh\n"
-        "SCRIPT_DIR=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\n"
-        "PYTHON_ROOT=$(dirname -- \"$SCRIPT_DIR\")\n"
-        "if [ -n \"${LD_LIBRARY_PATH:-}\" ]; then\n"
-        "  export LD_LIBRARY_PATH=\"$PYTHON_ROOT/lib:$LD_LIBRARY_PATH\"\n"
-        "else\n"
-        "  export LD_LIBRARY_PATH=\"$PYTHON_ROOT/lib\"\n"
-        "fi\n"
-        f"exec \"$SCRIPT_DIR/{real_bin.name}\" \"$@\"\n",
-        encoding="utf-8",
-    )
-    python_bin.chmod(0o755)
-
-
 def linux_runtime_dependencies(binary: Path) -> list[Path]:
     result = subprocess.run(
         ["ldd", str(binary)],
@@ -1013,8 +964,7 @@ def build_unix(version: str, stage_dir: Path, target_os: str, target_arch: str =
         if sqlite_prefix is not None:
             bundle_manylinux_sqlite_runtime_libs(python_dir, sqlite_prefix)
         bundle_linux_runtime_dependencies(python_dir)
-        rewrite_linux_rpaths(python_dir)
-        install_linux_python_launcher(python_dir)
+        configure_linux_runtime(python_dir)
     if target_os == "macos":
         bundle_macos_runtime_dependencies(python_dir)
     strip_binaries(python_dir, target_os)

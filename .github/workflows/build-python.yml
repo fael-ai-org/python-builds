@@ -343,6 +343,10 @@ jobs:
             | tee -a "$GITHUB_STEP_SUMMARY" || true
           rm -rf "$TMPDIR_D"
 
+      - name: Install Linux interoperability checks
+        if: matrix.target_os == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y binutils libarchive-dev
+
       - name: Validate packaged distribution
         shell: bash
         run: |
@@ -350,6 +354,17 @@ jobs:
           python scripts/validate_distribution.py \
             "dist-archive/${{ matrix.archive_name }}" \
             --full-timeout-seconds 20 \
+            2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Validate Linux archive on Fedora
+        if: matrix.target_os == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/work:ro" docker.io/library/fedora:44 \
+            bash -c "dnf install -y python3 binutils libarchive && \
+              python3 /work/scripts/validate_distribution.py \
+                '/work/dist-archive/${{ matrix.archive_name }}' --full-timeout-seconds 20" \
             2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
 
   release:

@@ -9,6 +9,8 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from linux_runtime import validate_linux_runtime
+
 
 def extract_archive(archive_path: Path, destination: Path) -> Path:
     if archive_path.suffix == ".zip":
@@ -107,6 +109,36 @@ def check_virtual_environment(packaged_python: Path, destination: Path) -> dict:
     return {"passed": checked.returncode == 0, "stage": "pip", "returncode": checked.returncode}
 
 
+def check_linux_host_interop(packaged_python: Path) -> dict:
+    """Exercise host-library loading in both orders and an inherited child."""
+    common = (
+        "import ctypes, ctypes.util, os, subprocess\n"
+        "name = ctypes.util.find_library('archive')\n"
+        "assert name, 'Host libarchive is required for Linux compatibility validation'\n"
+    )
+    cases = {
+        "extension_before_host": "import ssl, lzma\nctypes.CDLL(name)\n",
+        "host_before_extension": "ctypes.CDLL(name)\nimport ssl, lzma\n",
+        "child_environment": (
+            "import ssl, lzma\n"
+            "assert os.environ.get('LD_LIBRARY_PATH') == __import__('json').loads(__import__('sys').argv[1])\n"
+            "subprocess.run([__import__('sys').argv[2], '-I', '-c', "
+            "\"import ctypes; ctypes.CDLL('libarchive.so.13')\"], check=True)\n"
+        ),
+    }
+    import os
+    results = {}
+    for name, code in cases.items():
+        run = subprocess.run(
+            [str(packaged_python), "-I", "-c", common + code,
+             json.dumps(os.environ.get("LD_LIBRARY_PATH")), sys.executable],
+            capture_output=True, text=True, timeout=60, check=False,
+        )
+        results[name] = {"passed": run.returncode == 0, "returncode": run.returncode,
+                         "stderr": run.stderr[-2000:] if run.returncode else ""}
+    return {"passed": all(item["passed"] for item in results.values()), "cases": results}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate a packaged portable Python archive.")
     parser.add_argument("archive", help="Path to a built archive (.zip or .tar.gz).")
@@ -133,6 +165,11 @@ def main() -> int:
         full_exit, full_payload = run_check(checker, packaged_python, "full", args.full_timeout_seconds)
         full_unexpected_failures = int(full_payload.get("unexpected_failure_count", 0)) > 0
         virtual_environment = check_virtual_environment(packaged_python, Path(tmpdir) / "venv-validation")
+        linux_runtime = None
+        linux_interop = None
+        if sys.platform.startswith("linux"):
+            linux_runtime = validate_linux_runtime(packaged_python.parent.parent)
+            linux_interop = check_linux_host_interop(packaged_python)
 
         stdlib_compare = None
         compare_failed = False
@@ -150,12 +187,16 @@ def main() -> int:
             "full": full_payload,
             "stdlib_compare": stdlib_compare,
             "virtual_environment": virtual_environment,
+            "linux_runtime": linux_runtime,
+            "linux_host_interop": linux_interop,
         }
         print(json.dumps(summary, indent=2))
 
         # Fast checks and full-mode unexpected failures are release gates.
         # Platform-specific/optional modules are handled in check_stdlib.py.
-        if fast_exit != 0 or full_unexpected_failures or compare_failed or not virtual_environment["passed"]:
+        if (fast_exit != 0 or full_unexpected_failures or compare_failed or not virtual_environment["passed"]
+                or (linux_runtime is not None and not linux_runtime["passed"])
+                or (linux_interop is not None and not linux_interop["passed"])):
             return 1
     return 0
 

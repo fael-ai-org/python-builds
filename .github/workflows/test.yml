@@ -56,6 +56,10 @@ jobs:
       - name: Compile Python scripts
         run: python -m compileall scripts
 
+      - name: Install Linux ELF regression tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y patchelf binutils
+
       - name: Run resolver unit tests
         run: python -m unittest discover -s tests -v
 
