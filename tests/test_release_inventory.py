@@ -28,12 +28,13 @@ class ReleaseInventoryTests(unittest.TestCase):
             for index, name in enumerate(expected_archives(self.versions)) for suffix in ("", ".sha256")]
                 + [{"name": "SHA256SUMS.txt", "state": "uploaded", "size": 100, "digest": "sha256:" + "a" * 64}]}
 
-    def plan(self, inventory, *, force=False, versions=None, public=False):
+    def plan(self, inventory, *, force=False, versions=None, public=False,
+             candidate_suffix=None, explicit_tag=None):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             details = {major: {"version": version, "tag_commit_sha": "a" * 40}
                        for major, version in self.versions.items()}
-            (root / "state.json").write_text(json.dumps({"release_tag": "old", "details": details}))
+            (root / "state.json").write_text(json.dumps({"release_tag": inventory.get("tag_name", "old"), "details": details}))
             (root / "resolved.json").write_text(json.dumps({
                 major: {"version": version, "tag_commit_sha": "b" * 40}
                 for major, version in (versions or self.versions).items()}))
@@ -46,6 +47,10 @@ class ReleaseInventoryTests(unittest.TestCase):
                 command.append("--force")
             if public:
                 command += ["--release-tag", "old", "--candidate-suffix", "12345"]
+            elif candidate_suffix is not None:
+                command += ["--candidate-suffix", candidate_suffix]
+            if explicit_tag is not None:
+                command += ["--release-tag", explicit_tag]
             return json.loads(subprocess.check_output(command, text=True))
 
     def test_complete_unchanged_release_does_not_build(self):
@@ -83,6 +88,21 @@ class ReleaseInventoryTests(unittest.TestCase):
         plan = self.plan(inventory, force=True, public=True)
         self.assertEqual(len(plan["build_targets"]), 8)
         self.assertEqual(plan["release_tag"], "old-build-12345")
+
+    def test_default_rebuild_after_suffixed_release_gets_fresh_candidate(self):
+        for protected in ({"draft": False}, {"draft": True, "immutable": True}):
+            with self.subTest(protected=protected):
+                inventory = self.inventory()
+                inventory.update(tag_name="python-3.12.16-3.13.18-build-111", **protected)
+                plan = self.plan(inventory, force=True, candidate_suffix="222")
+                self.assertEqual(plan["release_tag"], "python-3.12.16-3.13.18-build-222")
+                self.assertEqual(len(plan["build_targets"]), 8)
+
+    def test_distinct_explicit_tag_is_preserved_for_operator_selected_candidate(self):
+        inventory = self.inventory()
+        inventory.update(tag_name="python-3.12.16-3.13.18-build-111", draft=False)
+        plan = self.plan(inventory, force=True, candidate_suffix="222", explicit_tag="selected-candidate")
+        self.assertEqual(plan["release_tag"], "selected-candidate")
 
     def populate(self, root):
         for name in expected_archives(self.versions):

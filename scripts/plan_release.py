@@ -131,7 +131,7 @@ def main() -> None:
     if should_build and not has_actual_changes and not args.force:
         release_reason = "missing-assets"
     release_tag = args.release_tag or default_release_tag(current_versions, should_build, args.force)
-    if (should_build and inventory and release_tag == inventory.get("tag_name")
+    if (should_build and inventory and (not args.release_tag or release_tag == inventory.get("tag_name"))
             and (not inventory.get("draft") or inventory.get("immutable"))):
         import re
         if not args.candidate_suffix or not re.fullmatch(r"[0-9]+", args.candidate_suffix):
