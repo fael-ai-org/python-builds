@@ -8,10 +8,14 @@ from pathlib import Path
 
 
 def is_elf(path: Path) -> bool:
+    """A loadable ELF executable/shared object, excluding compiler object files."""
     if not path.is_file() or path.is_symlink():
         return False
     with path.open("rb") as stream:
-        return stream.read(4) == b"\x7fELF"
+        header = stream.read(18)
+    if len(header) != 18 or header[:4] != b"\x7fELF" or header[5] not in (1, 2):
+        return False
+    return int.from_bytes(header[16:18], "little" if header[5] == 1 else "big") in (2, 3)
 
 
 def elf_files(root: Path) -> list[Path]:

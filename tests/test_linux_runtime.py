@@ -92,6 +92,19 @@ class LinuxRuntimeTests(unittest.TestCase):
             self.assertEqual(run.returncode, 0, run.stderr)
             self.assertTrue(validate_linux_runtime(package)["passed"])
 
+    def test_compiler_object_files_are_preserved_without_elf_rewriting(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            package, _, _ = self.fixture(root)
+            source = root / "object.c"
+            source.write_text("int value(void) { return 42; }\n")
+            target = package / "lib/python.o"
+            subprocess.run(["cc", "-c", str(source), "-o", str(target)], check=True)
+            original = target.read_bytes()
+            configure_linux_runtime(package)
+            self.assertEqual(target.read_bytes(), original)
+            self.assertTrue(validate_linux_runtime(package)["passed"])
+
     def test_validation_rejects_launcher_environment_leak_and_generic_libraries(self):
         with tempfile.TemporaryDirectory() as temporary:
             package, _, _ = self.fixture(Path(temporary))
